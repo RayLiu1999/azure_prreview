@@ -1,14 +1,70 @@
 const SEVERITIES = new Set(['blocker', 'major', 'minor', 'nit'])
 const FENCE = /```(?:json)?\s*([\s\S]*?)```/
 
-function extractJson(text) {
-  const fenced = text.match(FENCE)
-  const candidate = fenced ? fenced[1] : text
+function isFindingsPayload(value) {
+  return Boolean(value && typeof value === 'object' && Array.isArray(value.findings))
+}
+
+function parseCandidate(candidate) {
   try {
-    return JSON.parse(candidate.trim())
+    const value = JSON.parse(candidate.trim())
+    return isFindingsPayload(value) ? value : null
   } catch {
     return null
   }
+}
+
+// Claude occasionally adds a short status line or terminal decoration around
+// the final JSON even though the prompt asks for JSON only. Find the first
+// balanced object that matches the review payload without executing anything.
+function findPayloadObject(text) {
+  let start = -1
+  let depth = 0
+  let inString = false
+  let escaped = false
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index]
+
+    if (start < 0) {
+      if (character === '{') {
+        start = index
+        depth = 1
+      }
+      continue
+    }
+
+    if (inString) {
+      if (escaped) escaped = false
+      else if (character === '\\') escaped = true
+      else if (character === '"') inString = false
+      continue
+    }
+
+    if (character === '"') inString = true
+    else if (character === '{') depth += 1
+    else if (character === '}') {
+      depth -= 1
+      if (depth === 0) {
+        const payload = parseCandidate(text.slice(start, index + 1))
+        if (payload) return payload
+        start = -1
+      }
+    }
+  }
+
+  return null
+}
+
+function extractJson(text) {
+  const fenced = text.match(FENCE)
+  if (fenced) {
+    const payload = parseCandidate(fenced[1])
+    if (payload) return payload
+  }
+
+  const payload = parseCandidate(text)
+  return payload || findPayloadObject(text)
 }
 
 function normalizeLine(value) {
@@ -37,7 +93,7 @@ function normalizeFinding(raw) {
 export function parseFindings(text) {
   const raw = typeof text === 'string' ? text : ''
   const parsed = extractJson(raw)
-  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.findings)) {
+  if (!parsed) {
     return { ok: false, raw }
   }
   return {

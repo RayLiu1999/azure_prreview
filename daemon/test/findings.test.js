@@ -42,6 +42,22 @@ test('解析沒有標語言的 code fence', () => {
   assert.equal(parseFindings(wrapped).ok, true)
 })
 
+test('JSON 前後有 CLI 說明文字仍能解析', () => {
+  const wrapped = '審核完成，以下是結果：\n' + JSON.stringify(valid) + '\n工作階段結束。'
+  const result = parseFindings(wrapped)
+  assert.equal(result.ok, true)
+  assert.equal(result.findings.length, 1)
+})
+
+test('字串內容含大括號時仍能找出完整 JSON', () => {
+  const payload = {
+    summary: 's',
+    findings: [{ file: 'a.js', title: 't', body: '條件 `{ ready: true }` 需要確認。' }],
+  }
+  const wrapped = `status\n${JSON.stringify(payload)}\nstatus`
+  assert.equal(parseFindings(wrapped).ok, true)
+})
+
 test('findings 為空陣列仍算成功', () => {
   const result = parseFindings(JSON.stringify({ summary: '沒問題', findings: [] }))
   assert.equal(result.ok, true)
