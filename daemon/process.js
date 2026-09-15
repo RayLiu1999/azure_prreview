@@ -43,9 +43,10 @@ export function runJsonlProcess(provider, prepare, parse, options = {}) {
     let cwd
     let timer
     let timedOut = false
+    let invocation
     try {
       if (cancelled) throw new Error('已取消')
-      const invocation = await prepare()
+      invocation = await prepare()
       if (cancelled) throw new Error('已取消')
       cwd = await mkdtemp(join(tmpdir(), 'prreview-run-'))
       child = spawn(await resolveExecutable(invocation.executable), invocation.args, {
@@ -101,6 +102,7 @@ export function runJsonlProcess(provider, prepare, parse, options = {}) {
       clearTimeout(timer)
       if (child && child.exitCode === null) child.kill()
       if (cwd) await rm(cwd, { recursive: true, force: true })
+      if (invocation?.cleanup) await invocation.cleanup().catch(() => {})
     }
   }
   return { events: generate(), cancel() { cancelled = true; child?.kill() } }
