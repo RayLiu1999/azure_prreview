@@ -38,17 +38,13 @@ daemon 會分別檢查兩個 CLI；其中一個不存在不會阻止另一個使
 1. 開啟 `chrome://extensions`。
 2. 開啟「開發人員模式」。
 3. 選擇「載入未封裝項目」，指定 `prreview/extension`。
-4. 在 Azure DevOps PR 頁面的 DevTools Console 設定 token：
-
-```js
-chrome.storage.local.set({ token: '貼上 daemon 印出的 token' })
-```
+4. 開啟 Azure DevOps PR 頁面，在右側面板的「設定」區貼上 daemon 印出的 token，按「儲存設定」。可按「測試連線」確認 token 有效。
 
 插件支援 `https://dev.azure.com/...` 與 `https://{organization}.visualstudio.com/...` 兩種 Azure DevOps Cloud 網址。自架 Server 與其他網域不支援。
 
 ## 使用
 
-開啟 PR 詳細頁，在右側面板選擇 Claude 或 Codex，按「開始審核」。進度會即時顯示，完成後列出依嚴重度排序的 findings。Agent 選擇會保存到瀏覽器儲存空間。
+開啟 PR 詳細頁，第一次使用先在右側面板的「設定」區輸入 daemon URL 與 token，按「儲存設定」；之後選擇 Claude 或 Codex，按「開始審核」。進度會即時顯示，完成後列出依嚴重度排序的 findings。設定與 Agent 選擇會保存到瀏覽器本機儲存空間。
 
 Codex 執行會使用 `--sandbox read-only`、`--ignore-user-config` 與 `--output-schema`，只重新注入 `azure-devops` MCP 的五個唯讀工具；這個白名單 server 以非互動 `approve` 模式執行，避免 CLI 沒有 TTY 時取消讀取。可先執行下列指令確認 MCP：
 
@@ -71,7 +67,7 @@ codex mcp get azure-devops --json
 |------|------|
 | 面板沒出現 | 確認網址是 PR 詳細頁，且使用 `dev.azure.com` 或 `*.visualstudio.com` |
 | daemon 未連線 | 確認 `npm start` 正在執行，且插件使用同一個埠號 |
-| token 無效 | 重新複製 daemon 啟動時印出的 token；不要把 token 放進 URL |
+| token 無效 | 重新複製 daemon 啟動時印出的 token，在側邊欄「設定」區重新儲存；不要把 token 放進 URL |
 | 找不到 Claude 或 Codex | 設定對應的 `PRREVIEW_CLAUDE` 或 `PRREVIEW_CODEX` 完整路徑 |
 | Codex 找不到 MCP | 執行 `codex mcp get azure-devops --json`，確認 server 已啟用 |
 | 結果顯示為純文字 | Agent 沒有符合 JSON 格式，原始文字仍會保留在面板，可重跑審核 |
@@ -79,7 +75,7 @@ codex mcp get azure-devops --json
 ## 安全性
 
 - daemon 僅監聽 `127.0.0.1`。
-- `/review` 與 SSE 事件都必須帶 token，驗證在解析 body 或啟動 job 前完成。
+- `/review`、`/auth` 與 SSE 事件都必須帶 token，驗證在解析 body 或啟動 job 前完成。
 - CORS 僅允許 Azure DevOps Cloud 網域。
 - Claude 僅開放 Azure DevOps 唯讀 MCP 工具。
 - Codex 使用 read-only sandbox 與隔離設定；file change 事件會中止審核。

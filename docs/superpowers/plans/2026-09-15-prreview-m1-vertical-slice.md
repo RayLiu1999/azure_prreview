@@ -15,7 +15,7 @@
 - Task 1–4 已完成，包含測試與邊界處理。
 - Task 5 Claude prompt／執行器已完成；實際 Claude 審核因帳號 session 額度不足而回報錯誤。
 - Task 5A–7 的程式實作與自動測試已完成：Codex 隔離 provider、job store、HTTP/SSE server 與失敗路徑測試；Codex MCP 白名單讀取核准策略已補上。
-- Task 8–9 的程式實作與自動測試已完成：插件外殼、Shadow DOM 側邊欄、Visual Studio 網址支援、daemon client 與 SSE 串接。
+- Task 8–9 的程式實作與自動測試已完成：插件外殼、Shadow DOM 側邊欄、設定儲存與 token 連線檢查、Visual Studio 網址支援、daemon client 與 SSE 串接。
 - Task 10 README 已完成；瀏覽器手動驗收仍待實機操作。
 - 真實 Codex PR 67066 唯讀審核已完成：讀取 PR、5 個變更檔案、`CLAUDE.md` 與相關呼叫端／測試，共 51 個 MCP 事件，findings 為空。
 - 驗證：daemon `node --test` 75/75、extension `node --test` 18/18，JavaScript 語法與 JSON manifest／schema 檢查通過。
@@ -58,7 +58,7 @@ prreview/
   extension/
     manifest.json
     prurl.js           PR URL 解析                      ← 純函式，零 chrome 依賴
-    settings.js        設定讀取（含 agent）               ← 唯一接觸 chrome.storage
+    settings.js        設定讀取與儲存（含 agent）          ← 唯一接觸 chrome.storage
     client.js          daemon HTTP/SSE 客戶端            ← 唯一接觸 fetch
     sidebar.js         面板渲染（Shadow DOM 內）
     sidebar.css        面板樣式
@@ -2009,7 +2009,7 @@ export async function setAgent(agent) {
 }
 ```
 
-M1 沒有獨立設定頁，token 用 DevTools 手動塞入；Agent 直接在側邊欄選擇並保存。
+token 與 daemon URL 直接在側邊欄的設定區輸入並保存；Agent 也在側邊欄選擇並保存。
 
 - [x] **Step 4: 寫樣式**
 
@@ -2450,7 +2450,7 @@ import { startReview, streamJob } from './client.js'
     if (!settings.token) {
       sidebar.setState({
         phase: 'error',
-        message: '尚未設定 token。請依 README 的說明貼上 daemon 啟動時印出的 token。',
+        message: '尚未設定 token。請先在側邊欄的「設定」區貼上 daemon token。',
       })
       return
     }
@@ -2499,13 +2499,7 @@ import { startReview, streamJob } from './client.js'
 cd prreview/daemon && npm start
 ```
 
-複製印出的 token。在 Azure DevOps PR 分頁按 F12 開 Console，執行（把 `<TOKEN>` 換掉）：
-
-```js
-chrome.storage.local.set({ token: '<TOKEN>' })
-```
-
-M1 刻意不做完整設定頁；Agent 可直接在側邊欄選擇 Claude 或 Codex。
+複製印出的 token。開啟 Azure DevOps PR 頁面，在右側面板的「設定」區貼上 token，按「儲存設定」；可按「測試連線」確認設定有效。Agent 直接在側邊欄選擇 Claude 或 Codex。
 
 - [ ] **Step 4: 端到端手動驗收**
 
@@ -2521,7 +2515,7 @@ Expected:
 
 1. 停掉 daemon（Ctrl+C），重新整理 PR 頁面，按「開始審核」
    Expected: 顯示「daemon 未連線。請先執行：cd prreview/daemon && npm start」
-2. 重開 daemon，在 Console 執行 `chrome.storage.local.set({ token: 'wrong' })`，重新整理後按「開始審核」
+2. 重開 daemon，在側邊欄「設定」區輸入錯誤 token 並按「測試連線」，確認顯示 token 無效的訊息
    Expected: 顯示 token 無效的訊息，而非未處理的例外
 3. 把正確 token 設回去，確認恢復正常
 4. 選擇未安裝的 Agent 或暫時把其 path 指向不存在的位置
@@ -2590,11 +2584,7 @@ daemon 預設監聽 `127.0.0.1:7797`，只接受本機連線。可用環境變�
 
 ### 3. 設定 token
 
-M1 尚無設定頁面。開啟任一 Azure DevOps 分頁，按 F12 開 Console，執行：
-
-    chrome.storage.local.set({ token: '貼上剛才複製的 token' })
-
-重新整理頁面即可。
+開啟任一 Azure DevOps PR 頁面，在右側面板「設定」區輸入 daemon URL 與 token，按「儲存設定」；可按「測試連線」確認 token 有效。
 
 ## 使用
 
@@ -2646,7 +2636,7 @@ token 等同於「在你機器上啟動 agent」的權限，請勿外流。
 
 已完成：PR 偵測、Claude／Codex 選擇、AI 審核、結構化意見顯示。
 
-尚未實作（規劃於 M2／M3）：把意見發成 PR 留言、設定頁 UI、自訂審核指示、取消按鈕、結果快取。
+尚未實作（規劃於 M2／M3）：把意見發成 PR 留言、獨立設定頁 UI、自訂審核指示、取消按鈕、結果快取。
 ```
 
 - [x] **Step 2: 全測試複驗**

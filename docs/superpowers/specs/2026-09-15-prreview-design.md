@@ -19,7 +19,7 @@
 | 目標平台 | 僅 Azure DevOps（`dev.azure.com`） | 唯一實際使用的平台；抽象化跨平台是尚未存在的需求 |
 | 使用對象 | 先自用，之後發給團隊 | 不得 hardcode 本機路徑，設定需可調，安裝步驟需文件化 |
 | 橋接方式 | 本地 HTTP daemon（Node） | 見下方「為何不用 Native Messaging」 |
-| Agent 選擇 | 每次 review 指定 `claude` 或 `codex`；預設 `claude` | M1 在側邊欄提供下拉選單並寫入 `chrome.storage`；M2 在設定頁補預設值管理；不需重啟 daemon |
+| Agent 選擇 | 每次 review 指定 `claude` 或 `codex`；預設 `claude` | M1 在側邊欄提供下拉選單、daemon URL 與 token 設定並寫入 `chrome.storage`；不需重啟 daemon |
 | 驅動 Agent | Claude：`claude -p --output-format stream-json`；Codex：`codex exec --json --ephemeral --sandbox read-only` | 沿用所選 CLI 的登入與 MCP 設定，不額外管理模型 API key |
 | 程式碼視野 | PR diff + 所選 Agent 用 MCP 按需抓檔 | 不需本機 clone，免除「repo → 本機路徑」對應表與 fetch/checkout 的整層複雜度 |
 | 產出格式 | 結構化 findings JSON + 一段總評 | 側邊欄需逐則展示、過濾、逐則發留言；純 Markdown 做不到 |
@@ -61,7 +61,7 @@ daemon 能 `spawn` `claude` 或 `codex`，而兩者都可能具備檔案與 MCP 
 因此：
 
 - daemon 只監聽 `127.0.0.1`，不監聽 `0.0.0.0`
-- daemon 啟動時產生隨機 token，寫入本機設定檔並印在 console；使用者將其貼進插件設定頁
+- daemon 啟動時產生隨機 token，寫入本機設定檔並印在 console；使用者將其貼進 PR 側邊欄的設定區
 - 每個請求必須帶 `X-PRReview-Token`；驗證失敗直接 401，**且在執行任何副作用之前就擋下**
 - CORS 的 `Access-Control-Allow-Origin` 只開給 Azure DevOps origin 與插件自身
 - Claude review 使用 `--restricted` 加唯讀 MCP 工具白名單
@@ -170,7 +170,7 @@ content.js  ← GET /jobs/:id/events (SSE)
 | 情境 | 行為 |
 |------|------|
 | daemon 未啟動 | 側邊欄顯示「daemon 未連線」與啟動指令，不重試轟炸 |
-| token 錯誤或未設定 | 側邊欄顯示「請到設定頁貼上 token」並附設定頁連結 |
+| token 錯誤或未設定 | 側邊欄設定區顯示可操作的錯誤訊息 |
 | 所選 CLI 不在 PATH | 該次 review 立即回傳清楚錯誤，並提示 `PRREVIEW_CLAUDE` 或 `PRREVIEW_CODEX` |
 | Agent CLI 非零退出 | 把 stderr 原文帶回側邊欄，不吞掉 |
 | Agent 值不是 `claude`／`codex` | daemon 回 400，不啟動 job |
@@ -182,9 +182,9 @@ content.js  ← GET /jobs/:id/events (SSE)
 ## 里程碑
 
 **M1 — 垂直切片**：在 PR 頁面按一下，選用 Claude 或 Codex 後，側邊欄顯示真正的 findings。端到端串通但功能最少。
-不含：發留言、獨立設定頁、自訂 prompt、結果快取。token 驗證與 provider 隔離從 M1 就要有（安全機制不補做）；token 先以手動方式寫入 chrome.storage，Agent 則直接在側邊欄選擇並保存。
+不含：發留言、獨立設定頁、自訂 prompt、結果快取。token 驗證與 provider 隔離從 M1 就要有（安全機制不補做）；token、daemon URL 與 Agent 都在側邊欄設定並保存。
 
-**M2 — 可用**：發成 PR 留言、設定頁（daemon URL / token / Agent / 自訂指示）、取消按鈕。
+**M2 — 可用**：發成 PR 留言、獨立設定頁（自訂指示與進階設定）、取消按鈕。
 
 **M3 — 可發佈**：README 安裝說明、daemon 啟動檢查、錯誤處理補完、結果快取。
 
