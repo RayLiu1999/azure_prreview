@@ -64,7 +64,7 @@ daemon 能 `spawn` `claude` 或 `codex`，而兩者都可能具備檔案與 MCP 
 - daemon 啟動時產生隨機 token，寫入本機設定檔並印在 console；使用者將其貼進 PR 側邊欄的設定區
 - 每個請求必須帶 `X-PRReview-Token`；驗證失敗直接 401，**且在執行任何副作用之前就擋下**
 - CORS 的 `Access-Control-Allow-Origin` 只開給 Azure DevOps origin 與插件自身
-- Claude review 使用 `--restricted` 加唯讀 MCP 工具白名單
+- Claude review 使用 `--restricted`、`--strict-mcp-config` 與唯讀 MCP 工具白名單
 - Codex review 使用 `--sandbox read-only`，並以隔離設定只啟用 `azure-devops` 的唯讀工具；不能只靠 prompt 宣稱唯讀
 
 CORS 本身不是安全機制，token 才是。順序很重要：先驗 token，再做事。
@@ -104,6 +104,7 @@ prreview/
     runner.js          選擇 provider、spawn CLI、組 prompt ← 唯一接觸 child_process
     stream.js          Claude stream-json → 進度事件    ← 純函式
     codex.js           Codex 隔離設定、JSONL 解析與執行
+    claude.js          Claude Azure DevOps MCP 暫存設定
     findings.js        findings schema 驗證與正規化     ← 純函式
     prompts/
       review.md        內建審核 prompt
@@ -127,7 +128,7 @@ prreview/
 - `parseStreamEvent(line)`／`parseCodexStreamEvent(line)` → `ProgressEvent | null`
   - 把 Claude stream-json 或 Codex `--json` JSONL 事件翻譯成側邊欄看得懂的共同進度格式（「正在讀 X 檔」、「已產生 N 則意見」）
   - 無法辨識的事件回傳 `null`，不得拋錯——CLI 的事件格式會隨版本增減
-  - `codex.js` 另外負責讀取使用者的 `azure-devops` MCP 定義，並為 review 建立只含唯讀工具的隔離 invocation
+  - `claude.js` 與 `codex.js` 負責讀取使用者的 `azure-devops` MCP 定義，並為 review 建立只含唯讀工具的隔離 invocation
 
 **`findings.js`（純函式）**
 
@@ -138,7 +139,7 @@ prreview/
 **`runner.js`**
 
 - `runReview(pr, options)` → `{ events: AsyncIterable<ProgressEvent>, cancel(): void }`，其中 `options.agent` 為 `claude` 或 `codex`
-- Claude adapter 使用 `--restricted` 與 `--allowedTools`；Codex adapter 使用 `--sandbox read-only`、`--ephemeral` 與隔離 MCP 設定。兩者都只暴露 azure-devops 唯讀工具
+- Claude adapter 使用 `--restricted`、`--strict-mcp-config` 與 `--allowedTools`；Codex adapter 使用 `--sandbox read-only`、`--ephemeral` 與隔離 MCP 設定。兩者都只暴露 azure-devops 唯讀工具
 - `postComment(pr, finding, options)` → `Promise<void>`：另起一個隔離 process，只暴露 `thread_write`，prompt 為單一明確指令
 
 **`jobs.js`**
@@ -155,7 +156,7 @@ PR 頁面
 daemon
   → jobs.js 建立 job，回傳 jobId
   → runner.js 依 agent spawn：
-      claude -p --restricted --output-format stream-json --allowedTools <唯讀工具>
+      claude -p --restricted --strict-mcp-config --output-format stream-json --allowedTools <唯讀工具>
       codex exec --json --ephemeral --sandbox read-only <隔離的唯讀 MCP 設定>
                 prompt = prompts/review.md + PR 座標 + 使用者自訂指示
   → stream.js 逐行解析 → SSE 推送進度

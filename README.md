@@ -29,6 +29,7 @@ npm start
 - `PRREVIEW_PORT`：監聽埠號
 - `PRREVIEW_CONFIG_DIR`：token 儲存目錄
 - `PRREVIEW_CLAUDE`：Claude 執行檔完整路徑
+- `PRREVIEW_CLAUDE_MCP_CONFIG`：Claude MCP 設定檔路徑；未設定時讀取 `~/.claude.json` 的 `azure-devops`
 - `PRREVIEW_CODEX`：Codex 執行檔完整路徑
 
 daemon 會分別檢查兩個 CLI；其中一個不存在不會阻止另一個使用。
@@ -46,7 +47,7 @@ daemon 會分別檢查兩個 CLI；其中一個不存在不會阻止另一個使
 
 開啟 PR 詳細頁，第一次使用先在右側面板的「設定」區輸入 daemon URL 與 token，按「儲存設定」；之後選擇 Claude 或 Codex，按「開始審核」。進度會即時顯示，完成後列出依嚴重度排序的 findings。設定與 Agent 選擇會保存到瀏覽器本機儲存空間。
 
-Codex 執行會使用 `--sandbox read-only`、`--ignore-user-config` 與 `--output-schema`，只重新注入 `azure-devops` MCP 的五個唯讀工具；這個白名單 server 以非互動 `approve` 模式執行，避免 CLI 沒有 TTY 時取消讀取。可先執行下列指令確認 MCP：
+Claude 執行會使用 `--restricted` 與 `--strict-mcp-config`，從 MCP 設定中只注入 `azure-devops` server；Codex 執行會使用 `--sandbox read-only`、`--ignore-user-config` 與 `--output-schema`，只重新注入 `azure-devops` MCP 的五個唯讀工具。兩個 provider 都只允許這五個唯讀工具。可先執行下列指令確認 MCP：
 
 ```text
 codex mcp get azure-devops --json
@@ -68,6 +69,7 @@ codex mcp get azure-devops --json
 | 面板沒出現 | 確認網址是 PR 詳細頁，且使用 `dev.azure.com` 或 `*.visualstudio.com` |
 | daemon 未連線 | 確認 `npm start` 正在執行，且插件使用同一個埠號 |
 | token 無效 | 重新複製 daemon 啟動時印出的 token，在側邊欄「設定」區重新儲存；不要把 token 放進 URL |
+| Claude 找不到 azure-devops MCP | 確認 `claude mcp list` 顯示已連線；設定 `PRREVIEW_CLAUDE_MCP_CONFIG` 指向含有 `mcpServers.azure-devops` 的 JSON 設定檔 |
 | 找不到 Claude 或 Codex | 設定對應的 `PRREVIEW_CLAUDE` 或 `PRREVIEW_CODEX` 完整路徑 |
 | Codex 找不到 MCP | 執行 `codex mcp get azure-devops --json`，確認 server 已啟用 |
 | 結果顯示為純文字 | Agent 沒有符合 JSON 格式，原始文字仍會保留在面板，可重跑審核 |
@@ -77,7 +79,7 @@ codex mcp get azure-devops --json
 - daemon 僅監聽 `127.0.0.1`。
 - `/review`、`/auth` 與 SSE 事件都必須帶 token，驗證在解析 body 或啟動 job 前完成。
 - CORS 僅允許 Azure DevOps Cloud 網域。
-- Claude 僅開放 Azure DevOps 唯讀 MCP 工具。
+- Claude 使用隔離的暫存 MCP 設定，只載入 Azure DevOps server，並僅開放五個唯讀工具。
 - Codex 使用 read-only sandbox 與隔離設定；file change 事件會中止審核。
 - token 等同於在本機啟動 Agent 的權限，請勿外流。
 

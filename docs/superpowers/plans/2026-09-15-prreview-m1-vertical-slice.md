@@ -13,12 +13,12 @@
 ## 實作進度（2026-09-15）
 
 - Task 1–4 已完成，包含測試與邊界處理。
-- Task 5 Claude prompt／執行器已完成；實際 Claude 審核因帳號 session 額度不足而回報錯誤。
+- Task 5 Claude prompt／執行器已完成；Claude 執行器會從使用者 MCP 設定只注入 `azure-devops` server，避免 `--restricted` 排除必要 MCP。
 - Task 5A–7 的程式實作與自動測試已完成：Codex 隔離 provider、job store、HTTP/SSE server 與失敗路徑測試；Codex MCP 白名單讀取核准策略已補上。
 - Task 8–9 的程式實作與自動測試已完成：插件外殼、Shadow DOM 側邊欄、設定儲存與 token 連線檢查、Visual Studio 網址支援、daemon client 與 SSE 串接。
 - Task 10 README 已完成；瀏覽器手動驗收仍待實機操作。
 - 真實 Codex PR 67066 唯讀審核已完成：讀取 PR、5 個變更檔案、`CLAUDE.md` 與相關呼叫端／測試，共 51 個 MCP 事件，findings 為空。
-- 驗證：daemon `node --test` 75/75、extension `node --test` 18/18，JavaScript 語法與 JSON manifest／schema 檢查通過。
+- 驗證：daemon `node --test` 79/79、extension `node --test` 23/23，JavaScript 語法與 JSON manifest／schema 檢查通過。
 - Git 已移至 `prreview/.git`；父層 `Extension/.git` 的原始 metadata 保存在 `prreview/.git/legacy-extension.git`，未改寫原歷史。
 
 ## Global Constraints
@@ -31,6 +31,7 @@
 - **Agent 列舉值**：全專案只接受 `claude` / `codex`，預設 `claude`；未知值回 400，且不得啟動 process。
 - **Codex 必須隔離設定**：review process 使用 `--ignore-user-config`，只重新注入 `azure-devops` MCP 的唯讀工具，並使用 `--sandbox read-only`。不能只靠 prompt 宣稱唯讀。
 - **Codex MCP 非互動核准**：隔離設定對白名單 server 使用 `default_tools_approval_mode = "approve"`；因為 server 只暴露五個讀取工具，所以不會擴大 PR 或本機寫入能力。
+- **Claude MCP 隔離**：`--restricted` 搭配 `--strict-mcp-config`，執行時只從暫存設定載入 `azure-devops` server，再以 `--allowedTools` 限定五個唯讀工具。
 - **不要求兩個 CLI 同時存在**：只要所選 Agent 可執行且已設定 `azure-devops` MCP 即可；缺少另一個不影響 review。
 - **平台限定** Azure DevOps Cloud：`dev.azure.com` 與 `*.visualstudio.com`；不支援自架 Server。
 - **commit 格式**：`<type>(<scope>): <subject> [no-issue]`，scope 一律為 `prreview`，訊息用繁體中文。
@@ -48,13 +49,14 @@ prreview/
     auth.js            token 產生、讀寫、比對          ← 純函式 + 檔案 I/O
     stream.js          claude stream-json → 進度事件    ← 純函式
     codex.js           Codex 隔離設定、JSONL 解析與執行  ← provider adapter
+    claude.js          Claude Azure DevOps MCP 暫存設定  ← provider adapter
     findings.js        findings JSON 驗證與正規化       ← 純函式
     runner.js          選擇 provider、組 prompt          ← provider facade
     jobs.js            job 生命週期與訂閱者管理
     server.js          HTTP 路由、CORS、token 驗證、SSE  ← 唯一接觸網路
     prompts/review.md  內建審核 prompt
     prompts/findings.schema.json  Codex 結構化輸出 schema
-    test/              auth / stream / codex / findings / jobs / server 各一支
+    test/              auth / claude / stream / codex / findings / jobs / server 各一支
   extension/
     manifest.json
     prurl.js           PR URL 解析                      ← 純函式，零 chrome 依賴
@@ -925,7 +927,7 @@ export function runReview(pr, options = {}) {
       '--output-format',
       'stream-json',
       '--verbose',
-      '--restricted',
+      '--restricted', '--mcp-config', <暫存的 Azure DevOps MCP 設定>, '--strict-mcp-config',
       '--allowedTools',
       ...READ_ONLY_TOOLS,
       '--permission-mode',
@@ -995,7 +997,7 @@ export function runReview(pr, options = {}) {
 }
 ```
 
-`--verbose` 是必要的：`--output-format stream-json` 搭配 `-p` 時需要它才會輸出完整事件串流。`--restricted` 把 Bash／PowerShell／REPL 整組移除，`--allowedTools` 再收斂到五個唯讀的 MCP 工具——這兩層一起保證 review 階段的 agent 不具備任何寫入能力。
+`--verbose` 是必要的：`--output-format stream-json` 搭配 `-p` 時需要它才會輸出完整事件串流。`--restricted` 把 Bash／PowerShell／REPL 整組移除，`--mcp-config` 與 `--strict-mcp-config` 只注入 Azure DevOps server，`--allowedTools` 再收斂到五個唯讀的 MCP 工具——這幾層一起保證 review 階段的 agent 不具備任何寫入能力。
 
 - [x] **Step 3: 驗證 claude 不存在時的錯誤處理**
 
