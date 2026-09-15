@@ -1,6 +1,6 @@
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { startReview, streamJob } from '../client.js'
+import { checkConnection, startReview, streamJob } from '../client.js'
 
 const settings = { daemonUrl: 'http://127.0.0.1:7797', token: 't'.repeat(64), agent: 'claude' }
 const originalFetch = globalThis.fetch
@@ -23,6 +23,23 @@ test('startReview 將 daemon 錯誤轉成可讀訊息', async () => {
   await assert.rejects(() => startReview({}, settings), /壞請求/)
   globalThis.fetch = async () => new Response('{}', { status: 401 })
   await assert.rejects(() => startReview({}, settings), /token 無效/)
+})
+
+test('checkConnection 傳送 token 並驗證 daemon', async () => {
+  let request
+  globalThis.fetch = async (url, init) => {
+    request = { url, init }
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+  assert.equal(await checkConnection(settings), true)
+  assert.equal(request.url, `${settings.daemonUrl}/auth`)
+  assert.equal(request.init.headers['X-PRReview-Token'], settings.token)
+})
+
+test('checkConnection 回報 token 或 daemon 錯誤', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: 'token 無效或未提供' }), { status: 401 })
+  await assert.rejects(() => checkConnection(settings), /token 無效/)
+  await assert.rejects(() => checkConnection({ ...settings, token: '' }), /請先填入 daemon URL 與 token/)
 })
 
 test('streamJob 解析分段 SSE、CRLF 與壞 frame', async () => {

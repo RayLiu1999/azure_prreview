@@ -21,11 +21,28 @@ function normalizeDaemonUrl(value) {
 export async function getSettings() {
   const stored = await chrome.storage.local.get(DEFAULTS)
   const merged = { ...DEFAULTS, ...stored }
+  const normalized = normalizeSettings(merged)
   return {
-    daemonUrl: normalizeDaemonUrl(merged.daemonUrl),
-    token: typeof merged.token === 'string' ? merged.token.trim() : '',
+    ...normalized,
     agent: merged.agent === 'codex' ? 'codex' : 'claude',
   }
+}
+
+export function normalizeSettings(values = {}) {
+  return {
+    daemonUrl: normalizeDaemonUrl(values.daemonUrl),
+    token: typeof values.token === 'string' ? values.token.trim() : '',
+  }
+}
+
+export async function saveSettings(values = {}) {
+  await chrome.storage.local.set(normalizeSettings(values))
+  return getSettings()
+}
+
+export async function clearToken() {
+  await chrome.storage.local.remove('token')
+  return getSettings()
 }
 
 export async function setAgent(agent) {

@@ -54,6 +54,7 @@ export function createServer({ token, jobStore = createJobStore(), runFn = runRe
       // Authenticate before parsing a body or starting work.
       if (!tokenMatches(token, req.headers['x-prreview-token'])) { json(res, 401, { error: 'token 無效或未提供' }); return }
       if (origin && !allowedOrigin(origin)) { json(res, 403, { error: '不允許的來源' }); return }
+      if (req.method === 'GET' && url.pathname === '/auth') { json(res, 200, { ok: true }); return }
       if (req.method === 'POST' && url.pathname === '/review') {
         let body
         try { body = await readBody(req) } catch (error) { json(res, 400, { error: error.message }); return }

@@ -1,7 +1,7 @@
 import { parsePrUrl } from './prurl.js'
 import { createSidebar } from './sidebar.js'
-import { getSettings, setAgent } from './settings.js'
-import { startReview, streamJob } from './client.js'
+import { clearToken, getSettings, normalizeSettings, saveSettings, setAgent } from './settings.js'
+import { checkConnection, startReview, streamJob } from './client.js'
 
 const PANEL_WIDTH = '380px'
 let host = null
@@ -23,8 +23,56 @@ function mount() {
   sidebar = createSidebar(shadow)
   const instance = sidebar
   sidebar.setState({ phase: 'idle' })
-  void getSettings().then(settings => { if (sidebar === instance) instance.setAgent(settings.agent) }).catch(() => {})
+  void getSettings().then(settings => {
+    if (sidebar !== instance) return
+    instance.setAgent(settings.agent)
+    instance.setSettings(settings)
+  }).catch(() => {})
   sidebar.onAgentChange(agent => { void setAgent(agent).catch(() => {}) })
+  sidebar.onSettingsSave(async draft => {
+    instance.setSettingsBusy(true)
+    instance.setSettingsStatus('儲存中…')
+    try {
+      const settings = await saveSettings(draft)
+      if (sidebar !== instance) return
+      instance.setSettings(settings)
+      instance.setSettingsStatus('設定已儲存。', 'success')
+    } catch (error) {
+      if (sidebar === instance) instance.setSettingsStatus(error?.message || '設定儲存失敗。', 'error')
+    } finally {
+      if (sidebar === instance) instance.setSettingsBusy(false)
+    }
+  })
+  sidebar.onSettingsClear(async () => {
+    instance.setSettingsBusy(true)
+    instance.setSettingsStatus('清除中…')
+    try {
+      const settings = await clearToken()
+      if (sidebar !== instance) return
+      instance.setSettings(settings)
+      instance.setSettingsStatus('Token 已清除。', 'success')
+    } catch (error) {
+      if (sidebar === instance) instance.setSettingsStatus(error?.message || 'Token 清除失敗。', 'error')
+    } finally {
+      if (sidebar === instance) instance.setSettingsBusy(false)
+    }
+  })
+  sidebar.onSettingsTest(async draft => {
+    const candidate = normalizeSettings(draft)
+    instance.setSettingsBusy(true)
+    instance.setSettingsStatus('測試連線中…')
+    try {
+      await checkConnection(candidate)
+      if (sidebar === instance) instance.setSettingsStatus('連線成功，token 有效。', 'success')
+    } catch (error) {
+      if (sidebar !== instance) return
+      instance.setSettingsStatus(error instanceof TypeError
+        ? 'daemon 未連線。請確認 daemon 正在執行。'
+        : error?.message || '連線測試失敗。', 'error')
+    } finally {
+      if (sidebar === instance) instance.setSettingsBusy(false)
+    }
+  })
   sidebar.onReview(() => review(instance))
 }
 
@@ -34,7 +82,7 @@ async function review(instance) {
   const settings = { ...(await getSettings()), agent: instance.getAgent() }
   if (sidebar !== instance) return
   if (!settings.token) {
-    instance.setState({ phase: 'error', message: '尚未設定 token。請依 README 說明貼上 daemon 啟動時印出的 token。' })
+    instance.setState({ phase: 'error', message: '尚未設定 token。請先在側邊欄的「設定」區貼上 daemon token。' })
     return
   }
   instance.setState({ phase: 'running', progress: '連線中…' })

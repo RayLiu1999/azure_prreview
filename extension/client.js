@@ -21,6 +21,18 @@ export async function startReview(pr, settings) {
   return body.jobId
 }
 
+export async function checkConnection(settings) {
+  if (!settings?.daemonUrl || !settings.token) throw new Error('請先填入 daemon URL 與 token。')
+  const res = await fetch(`${settings.daemonUrl}/auth`, {
+    headers: { 'X-PRReview-Token': settings.token },
+  })
+  let body = null
+  try { body = await res.json() } catch {}
+  if (!res.ok) throw new Error(messageFromResponse(res.status, body))
+  if (!body || body.ok !== true) throw new Error('daemon 回應格式無效。')
+  return true
+}
+
 export async function streamJob(jobId, settings, onEvent) {
   const res = await fetch(`${settings.daemonUrl}/jobs/${encodeURIComponent(jobId)}/events`, {
     headers: { 'X-PRReview-Token': settings.token },

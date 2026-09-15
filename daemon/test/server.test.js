@@ -45,6 +45,21 @@ test('/health 不需要 token', async () => {
   })
 })
 
+test('/auth 需要有效 token 且不啟動 job', async () => {
+  let started = false
+  const runFn = () => {
+    started = true
+    return fakeRunFn()()
+  }
+  await withServer(runFn, async (base) => {
+    assert.equal((await fetch(`${base}/auth`)).status, 401)
+    const res = await fetch(`${base}/auth`, { headers: { 'X-PRReview-Token': TOKEN } })
+    assert.equal(res.status, 200)
+    assert.deepEqual(await res.json(), { ok: true })
+  })
+  assert.equal(started, false)
+})
+
 test('沒帶 token 的 /review 回 401', async () => {
   await withServer(fakeRunFn(), async (base) => {
     assert.equal((await post(base, PR, null)).status, 401)
