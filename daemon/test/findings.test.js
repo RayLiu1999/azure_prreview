@@ -11,6 +11,7 @@ test('行號僅保留安全的正整數', () => {
 
 const valid = {
   summary: '整體結構清楚，有一處需要處理。',
+  verdict: 'needs_changes',
   findings: [
     {
       file: 'src/OrderService.cs',
@@ -26,6 +27,7 @@ test('解析乾淨的 JSON', () => {
   const result = parseFindings(JSON.stringify(valid))
   assert.equal(result.ok, true)
   assert.equal(result.summary, '整體結構清楚，有一處需要處理。')
+  assert.equal(result.verdict, 'needs_changes')
   assert.equal(result.findings.length, 1)
   assert.equal(result.findings[0].severity, 'major')
 })
@@ -59,9 +61,29 @@ test('字串內容含大括號時仍能找出完整 JSON', () => {
 })
 
 test('findings 為空陣列仍算成功', () => {
-  const result = parseFindings(JSON.stringify({ summary: '沒問題', findings: [] }))
+  const result = parseFindings(JSON.stringify({ summary: '沒問題', verdict: 'pass', findings: [] }))
   assert.equal(result.ok, true)
+  assert.equal(result.verdict, 'pass')
   assert.deepEqual(result.findings, [])
+})
+
+test('verdict 會依 blocker 或 major 強制判定為 needs_changes', () => {
+  const input = {
+    summary: '看起來沒問題',
+    verdict: 'pass',
+    findings: [{ file: 'a.js', line: 1, severity: 'blocker', title: '危險', body: '需要修正' }],
+  }
+  assert.equal(parseFindings(JSON.stringify(input)).verdict, 'needs_changes')
+})
+
+test('未知 verdict 不會默認為可通過', () => {
+  const input = { summary: 's', verdict: 'unknown', findings: [] }
+  assert.equal(parseFindings(JSON.stringify(input)).verdict, null)
+})
+
+test('舊格式缺少 verdict 時不會誤標為可通過', () => {
+  const input = { summary: 's', findings: [{ file: 'a.js', severity: 'minor', title: 't', body: 'b' }] }
+  assert.equal(parseFindings(JSON.stringify(input)).verdict, null)
 })
 
 test('line 缺漏時正規化為 null', () => {

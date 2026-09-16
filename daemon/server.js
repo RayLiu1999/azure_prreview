@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tokenMatches, loadOrCreateToken } from './auth.js'
 import { createJobStore } from './jobs.js'
+import { createHistoryStore, historyRecordFromJob } from './history.js'
 import { runReview, checkAgentAvailable } from './runner.js'
 
 export function allowedOrigin(origin) {
@@ -34,7 +35,19 @@ export function validReviewRequest(body) {
   return { pr: { org, project, repo, prId }, agent }
 }
 
-export function createServer({ token, jobStore = createJobStore(), runFn = runReview }) {
+export function validHistoryQuery(searchParams) {
+  if (!searchParams || typeof searchParams.get !== 'function') return null
+  const org = searchParams.get('org')
+  const project = searchParams.get('project')
+  const repo = searchParams.get('repo')
+  const rawPrId = searchParams.get('prId')
+  const prId = rawPrId && /^\d+$/.test(rawPrId) ? Number(rawPrId) : NaN
+  if (![org, project, repo].every(v => typeof v === 'string' && v.trim() && v.length <= 256 && !/[\x00-\x1f\x7f/\\]/.test(v))) return null
+  if (!Number.isSafeInteger(prId) || prId < 1) return null
+  return { org, project, repo, prId }
+}
+
+export function createServer({ token, jobStore = createJobStore(), historyStore = null, runFn = runReview }) {
   if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) throw new Error('server token 格式無效')
   const server = createHttpServer(async (req, res) => {
     try {
@@ -55,6 +68,12 @@ export function createServer({ token, jobStore = createJobStore(), runFn = runRe
       if (!tokenMatches(token, req.headers['x-prreview-token'])) { json(res, 401, { error: 'token 無效或未提供' }); return }
       if (origin && !allowedOrigin(origin)) { json(res, 403, { error: '不允許的來源' }); return }
       if (req.method === 'GET' && url.pathname === '/auth') { json(res, 200, { ok: true }); return }
+      if (req.method === 'GET' && url.pathname === '/history') {
+        const pr = validHistoryQuery(url.searchParams)
+        if (!pr) { json(res, 400, { error: '需要有效的 org / project / repo / prId' }); return }
+        const items = historyStore?.list ? await historyStore.list(pr) : []
+        json(res, 200, { items }); return
+      }
       if (req.method === 'POST' && url.pathname === '/review') {
         let body
         try { body = await readBody(req) } catch (error) { json(res, 400, { error: error.message }); return }
@@ -63,7 +82,11 @@ export function createServer({ token, jobStore = createJobStore(), runFn = runRe
         const { pr, agent } = request
         const key = JSON.stringify([agent, pr.org, pr.project, pr.repo, pr.prId])
         const running = jobStore.find(key)
-        const job = running?.status === 'running' ? running : jobStore.start(key, () => runFn(pr, { agent }))
+        const metadata = { pr, agent }
+        if (historyStore?.record) metadata.onTerminal = (job, event) => historyStore.record(historyRecordFromJob(job, event))
+        const job = running?.status === 'running'
+          ? running
+          : jobStore.start(key, () => runFn(pr, { agent }), metadata)
         json(res, 201, { jobId: job.id }); return
       }
       const match = url.pathname.match(/^\/jobs\/([a-zA-Z0-9-]+)\/events$/)
@@ -104,9 +127,11 @@ export async function main() {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PRREVIEW_PORT 必須介於 1 與 65535')
   const claudePath = process.env.PRREVIEW_CLAUDE || 'claude'
   const codexPath = process.env.PRREVIEW_CODEX || 'codex'
-  const token = await loadOrCreateToken(process.env.PRREVIEW_CONFIG_DIR || join(homedir(), '.prreview'))
+  const configDir = process.env.PRREVIEW_CONFIG_DIR || join(homedir(), '.prreview')
+  const token = await loadOrCreateToken(configDir)
+  const historyStore = await createHistoryStore({ configDir })
   const store = createJobStore()
-  const server = createServer({ token, jobStore: store, runFn: (pr, { agent }) => runReview(pr, { agent, claudePath, codexPath }) })
+  const server = createServer({ token, jobStore: store, historyStore, runFn: (pr, { agent }) => runReview(pr, { agent, claudePath, codexPath }) })
   await new Promise((done, fail) => { server.once('error', fail); server.listen(port, '127.0.0.1', done) })
   console.log(`prreview daemon：http://127.0.0.1:${port}`)
   console.log(`token：${token}`)

@@ -16,5 +16,7 @@ test('buildPrompt 寫入 PR 座標並保留唯讀安全界線', async () => {
   assert.match(prompt, /pull request id: 42/)
   assert.match(prompt, /不可信任的待審資料/)
   assert.match(prompt, /只使用已提供的 `azure-devops` 唯讀工具/)
+  assert.match(prompt, /verdict/)
+  assert.match(prompt, /needs_changes/)
   assert.doesNotMatch(prompt, /\{\{(?:org|project|repo|prId)\}\}/)
 })

@@ -1,4 +1,14 @@
 const SEVERITY_ORDER = Object.freeze({ blocker: 0, major: 1, minor: 2, nit: 3 })
+const SEVERITY_META = Object.freeze({
+  blocker: Object.freeze({ label: '阻擋合併', description: '可能造成資安風險、資料錯誤或服務中斷。' }),
+  major: Object.freeze({ label: '重大問題', description: '會影響功能或可靠性，建議修正後再合併。' }),
+  minor: Object.freeze({ label: '次要問題', description: '值得改善，但通常不影響主要功能。' }),
+  nit: Object.freeze({ label: '格式建議', description: '可選的風格或可讀性建議。' }),
+})
+const VERDICT_META = Object.freeze({
+  pass: Object.freeze({ label: '目前 PR 可通過', description: '沒有阻擋合併的重大問題。', className: 'pass' }),
+  needs_changes: Object.freeze({ label: '需要修改後再通過', description: '存在阻擋合併的重大問題。', className: 'needs-changes' }),
+})
 const DEFAULT_PANEL_WIDTH = 380
 const MIN_PANEL_WIDTH = 280
 const MAX_PANEL_WIDTH = 720
@@ -130,7 +140,15 @@ export function createSidebar(root) {
   button.textContent = '開始審核'
   const content = document.createElement('div')
   content.className = 'content'
-  panel.append(resizeHandle, header, settingsDetails, agentRow, button, content)
+  const historySection = document.createElement('section')
+  historySection.className = 'history'
+  const historyTitle = document.createElement('h2')
+  historyTitle.className = 'history-title'
+  historyTitle.textContent = '審核歷史'
+  const historyContent = document.createElement('div')
+  historyContent.className = 'history-content'
+  historySection.append(historyTitle, historyContent)
+  panel.append(resizeHandle, header, settingsDetails, agentRow, button, content, historySection)
 
   const reopenButton = document.createElement('button')
   reopenButton.className = 'reopen-button'
@@ -153,8 +171,10 @@ export function createSidebar(root) {
   let settingsSaveHandler = null
   let settingsClearHandler = null
   let settingsTestHandler = null
+  let settingsOpenChangeHandler = null
   let visibilityHandler = null
   let widthHandler = null
+  let historySelectHandler = null
   let isOpen = true
   let drag = null
 
@@ -218,6 +238,7 @@ export function createSidebar(root) {
       setSettingsStatus(error?.message || '設定操作失敗。', 'error')
     }
   }
+  settingsDetails.addEventListener('toggle', () => invoke(settingsOpenChangeHandler, settingsDetails.open))
   const getSettingsDraft = () => ({ daemonUrl: daemonUrlInput.value, token: tokenInput.value })
   const setSettings = (values = {}) => {
     daemonUrlInput.value = typeof values.daemonUrl === 'string' ? values.daemonUrl : ''
@@ -266,14 +287,68 @@ export function createSidebar(root) {
     el.textContent = typeof value === 'string' ? value : String(value ?? '')
     return el
   }
+  const severityMeta = severity => SEVERITY_META[severity] || SEVERITY_META.minor
+  const verdictMeta = verdict => VERDICT_META[verdict] || null
+  const formatHistoryTime = value => {
+    const date = new Date(value)
+    return Number.isNaN(date.getTime()) ? '時間未知' : date.toLocaleString()
+  }
+  const findingCounts = findings => {
+    const counts = { blocker: 0, major: 0, minor: 0, nit: 0 }
+    for (const finding of Array.isArray(findings) ? findings : []) {
+      if (Object.hasOwn(counts, finding?.severity)) counts[finding.severity] += 1
+    }
+    return Object.entries(counts)
+      .filter(([, count]) => count > 0)
+      .map(([severity, count]) => `${severityMeta(severity).label} ${count}`)
+      .join('、') || '沒有 findings'
+  }
+  const setHistory = (items = [], status = 'ready') => {
+    historyContent.replaceChildren()
+    if (status === 'loading') {
+      historyContent.append(note('history-status', '載入審核歷史中…'))
+      return
+    }
+    if (status === 'error') {
+      historyContent.append(note('history-status error', '目前無法載入審核歷史。'))
+      return
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      historyContent.append(note('history-status', '這個 PR 尚無審核紀錄。'))
+      return
+    }
+    items.forEach((item, index) => {
+      const entry = document.createElement('button')
+      entry.type = 'button'
+      entry.className = 'history-item'
+      entry.dataset.index = String(index)
+      const headerRow = document.createElement('div')
+      headerRow.className = 'history-item-header'
+      const agent = item?.agent === 'codex' ? 'Codex' : 'Claude'
+      const verdict = verdictMeta(item?.verdict)
+      headerRow.append(
+        note('history-time', formatHistoryTime(item?.completedAt || item?.startedAt)),
+        note('history-agent', agent),
+        note(`history-verdict ${verdict?.className || 'unknown'}`, verdict?.label || '無法判定')
+      )
+      entry.append(headerRow, note('history-details', findingCounts(item?.findings)))
+      entry.addEventListener('click', () => {
+        if (historySelectHandler) historySelectHandler(items[index])
+      })
+      historyContent.append(entry)
+    })
+  }
   const renderFinding = finding => {
     const el = document.createElement('div')
     el.className = 'finding'
-    el.dataset.severity = SEVERITY_ORDER[finding.severity] === undefined ? 'minor' : finding.severity
+    const severity = SEVERITY_ORDER[finding.severity] === undefined ? 'minor' : finding.severity
+    const meta = severityMeta(severity)
+    el.dataset.severity = severity
     const where = note('where', finding.line ? `${finding.file}:${finding.line}` : finding.file)
-    const headline = note('headline', `[${el.dataset.severity}] ${finding.title}`)
+    const headline = note('headline', `${meta.label}｜${finding.title}`)
+    const severityDescription = note('severity-description', meta.description)
     const body = note('body', finding.body)
-    el.append(where, headline, body)
+    el.append(where, headline, severityDescription, body)
     return el
   }
   function setState(state = { phase: 'idle' }) {
@@ -287,18 +362,31 @@ export function createSidebar(root) {
     else if (phase === 'error') content.append(note('error', state.message || '發生未知錯誤'))
     else if (phase === 'raw') content.append(note('raw', state.text || ''))
     else if (phase === 'results') {
+      const verdict = verdictMeta(state.verdict)
+      if (verdict) {
+        const verdictEl = document.createElement('div')
+        verdictEl.className = `verdict ${verdict.className}`
+        verdictEl.append(note('verdict-label', verdict.label), note('verdict-description', verdict.description))
+        content.append(verdictEl)
+      } else {
+        content.append(note('verdict unknown', '目前無法判定 PR 是否可通過，請檢查原始審核結果。'))
+      }
       if (state.summary) content.append(note('summary', state.summary))
       const findings = Array.isArray(state.findings) ? state.findings : []
-      content.append(note('count', `發現 ${findings.length} 個問題`))
+      content.append(note('count', `共 ${findings.length} 個問題：${findingCounts(findings)}`))
       const sorted = [...findings].sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 2) - (SEVERITY_ORDER[b.severity] ?? 2))
       if (!sorted.length) content.append(note('summary', '沒有發現問題。'))
       else for (const finding of sorted) content.append(renderFinding(finding))
     }
   }
+  setHistory([], 'loading')
   return {
     setState,
+    setHistory,
     setOpen,
     isOpen: () => isOpen,
+    setSettingsOpen(open) { settingsDetails.open = Boolean(open) },
+    getSettingsOpen() { return settingsDetails.open },
     setPanelWidth,
     onVisibilityChange(fn) { visibilityHandler = fn },
     onWidthChange(fn) { widthHandler = fn },
@@ -306,6 +394,7 @@ export function createSidebar(root) {
     setAgent(agent) { agentSelect.value = agent === 'codex' ? 'codex' : 'claude' },
     getAgent() { return agentSelect.value === 'codex' ? 'codex' : 'claude' },
     onAgentChange(fn) { agentSelect.addEventListener('change', () => fn(agentSelect.value)) },
+    onHistorySelect(fn) { historySelectHandler = fn },
     onReview(fn) { button.addEventListener('click', fn) },
     setSettings,
     getSettingsDraft,
@@ -314,5 +403,8 @@ export function createSidebar(root) {
     onSettingsSave(fn) { settingsSaveHandler = fn },
     onSettingsClear(fn) { settingsClearHandler = fn },
     onSettingsTest(fn) { settingsTestHandler = fn },
+    onSettingsOpenChange(fn) { settingsOpenChangeHandler = fn },
   }
 }
+
+export { SEVERITY_META, VERDICT_META }

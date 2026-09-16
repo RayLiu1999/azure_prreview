@@ -40,6 +40,7 @@ PR 座標：
 最後一則訊息只輸出一個 JSON 物件，不要包在 code fence 裡，不要加任何前後說明。結構如下：
 
 - summary：字串，一到三句話的整體評價
+- verdict：字串，只能是 `pass` 或 `needs_changes`；有 blocker 或 major 時必須是 `needs_changes`，只有 minor／nit 或沒有 finding 時才是 `pass`
 - findings：陣列，每個元素包含
   - file：字串，相對於 repo 根目錄的路徑
   - line：數字，問題所在行號

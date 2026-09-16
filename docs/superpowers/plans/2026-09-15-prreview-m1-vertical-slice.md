@@ -31,10 +31,12 @@
 - Claude 與 Codex provider 都使用隔離的 Azure DevOps MCP 設定與唯讀工具。Claude 使用 restricted／strict-mcp-config；Codex 使用 read-only sandbox、隔離 MCP、停用 shell 與 multi-agent。
 - review prompt 明確把 PR 內容、repository 文件與 AGENTS.md／CLAUDE.md 視為不可信資料，不能提高工具權限。
 - findings parser 能從 CLI 的前後置文字中擷取結構化 JSON；無法驗證時會回傳 raw text。SSE 若沒有 done 或 error terminal event 會被視為失敗。
-- extension 設定頁支援 daemon URL、token、測試連線與清除 token。Agent 選擇會寫入 chrome.storage.local，初始化非同步載入不會覆蓋使用者剛選的值。
+- extension 設定頁支援 daemon URL、token、測試連線與清除 token。Agent 選擇與「設定」區展開／收合狀態會寫入 chrome.storage.local，初始化非同步載入不會覆蓋使用者剛選的值。
 - 右側面板支援 280～720px 寬度、滑鼠拖曳、方向鍵、Home、End、關閉與右下角圖示重新開啟；離開 PR 頁面時會清理事件並還原 body margin。
 - 專案根目錄提供 start-daemon.cmd；它會在另一個視窗啟動 daemon，等待 token 建立後自動呼叫 scripts/copy-token.cmd。copy-token.cmd 與 scripts/copy-token.ps1 也可單獨執行，將 token 複製到剪貼簿而不印出 token。
-- 自動驗證：daemon 84 passed、extension 25 passed；JavaScript syntax、manifest JSON 與 git diff --check 已通過。
+- review 結果已加入 `verdict`；有 blocker／major 顯示需要修改，只有 minor／nit 或沒有 finding 時顯示可通過。側邊欄提供中文 severity 標籤、說明與數量。
+- daemon 會將完成或失敗的結果保存於本機 `history.json`，`/history` 只依目前 PR 身分查詢；側邊欄進入 PR 時載入歷史並可重新查看結果。
+- 自動驗證：daemon 94 passed、extension 31 passed；JavaScript syntax、manifest JSON 與 git diff --check 已通過。
 
 ### 尚待手動驗證
 
@@ -49,6 +51,40 @@
 - 側邊欄取消執行中 job 的按鈕。
 - 自動啟動或真正的背景服務；現階段只有方便手動啟動的 Windows cmd 腳本。
 - 自訂 prompt、severity 規則與模型選擇器。Agent 選單目前選 provider，模型沿用本機 CLI 預設。
+
+## 新增需求：PR 歷史與審核結論（2026-09-16）
+
+本分支 `feature/review-history-verdict` 先處理審核歷史、審核結論與側邊欄設定偏好。既有 M1 的唯讀與本機隔離邊界保持不變。
+
+### M2-A：依 PR 顯示審核歷史
+
+- [x] 以 `organization / project / repository / prId` 作為 PR 身分，保存每次完成或失敗的審核結果；同一 PR 的 Claude 與 Codex 記錄要能分開辨識。
+- [x] 新增受 token 保護的歷史查詢 API，查詢條件必須限定在目前 PR，不把其他 PR 的結果送回瀏覽器。
+- [x] 進入或切換 PR 時載入該 PR 的歷史；側邊欄顯示時間、Agent、結論與 findings 數量，最新紀錄優先。
+- [x] 設定保存上限與清理策略，避免歷史資料無限成長；讀取失敗時不影響新的 review。
+- [x] 覆蓋持久化、PR 範圍隔離、重啟 daemon 後可讀取與錯誤降級測試。
+
+### M2-B：中文 severity 與 PR 是否可通過
+
+- [x] 在 review 結果 schema 增加明確的 `verdict`，至少支援 `pass` 與 `needs_changes`；保留既有 `summary` 與 `findings`。
+- [x] 將結論規則固定為：有 `blocker` 或 `major` 時為 `needs_changes`，只有 `minor`／`nit` 或沒有 finding 時為 `pass`；規則由 parser 與 UI metadata 測試驗證。
+- [x] 側邊欄以中文顯示 severity：`blocker`「阻擋合併」、`major`「重大問題」、`minor`「次要問題」、`nit`「格式建議」，並附簡短說明與各級數量。
+- [x] 在結果頂端顯示「目前 PR 可通過」或「需要修改後再通過」，同時保留 summary 與逐則 finding。
+- [x] raw fallback、舊格式結果與未知 severity 必須維持安全降級，不得把無法驗證的結果誤標為可通過。
+- [x] 已補上 schema、parser、label metadata、API 與 history store 回歸測試；瀏覽器端真實結果仍列在 M1 手動驗收。
+
+### M2-C：保存側邊欄設定區收合狀態
+
+- [x] 將設定區展開／收合狀態保存於 `chrome.storage.local`，與 daemon URL、token、Agent 設定使用同一個瀏覽器偏好層。
+- [x] 側邊欄初始化時套用上次狀態；缺少或無效的舊資料一律預設展開。
+- [x] 補上保存、重新讀取與無效值降級測試，並同步更新使用說明。
+
+### 實作順序
+
+1. 先完成 `verdict` schema、parser 與中文顯示，讓新結果格式可以被 UI 驗證。
+2. 再建立 PR 範圍的持久化 store 與歷史查詢 API。
+3. 最後接上進入 PR 時的歷史載入、列表與空狀態／錯誤狀態。
+4. 側邊欄設定區的展開／收合狀態由瀏覽器偏好保存，建立後續頁面初始化的固定行為。
 
 ## Global Constraints
 
@@ -486,7 +522,7 @@ git commit -m "feat(prreview): 新增 claude stream-json 事件解析"
 - Produces:
   - `parseFindings(text: string): ParsedFindings`
   - `ParsedFindings` 為下列其中之一：
-    - `{ ok: true, summary: string, findings: Finding[] }`
+    - `{ ok: true, summary: string, verdict: 'pass'|'needs_changes'|null, findings: Finding[] }`
     - `{ ok: false, raw: string }`
   - `Finding` = `{ file: string, line: number|null, severity: 'blocker'|'major'|'minor'|'nit', title: string, body: string }`
 
@@ -501,6 +537,7 @@ import { parseFindings } from '../findings.js'
 
 const valid = {
   summary: '整體結構清楚，有一處需要處理。',
+  verdict: 'needs_changes',
   findings: [
     {
       file: 'src/OrderService.cs',
@@ -1129,9 +1166,10 @@ Codex 的非互動模式使用 `codex exec`。`--json` 會在 stdout 產生 JSON
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["summary", "findings"],
+  "required": ["summary", "verdict", "findings"],
   "properties": {
     "summary": { "type": "string" },
+    "verdict": { "enum": ["pass", "needs_changes"] },
     "findings": {
       "type": "array",
       "items": {
@@ -2704,8 +2742,8 @@ git commit -m "docs(prreview): 新增安裝與使用說明"
 
 ### 自動驗證
 
-- [x] daemon 測試全數通過：84 passed。
-- [x] extension 測試全數通過：25 passed。
+- [x] daemon 測試全數通過：94 passed。
+- [x] extension 測試全數通過：31 passed。
 - [x] JavaScript syntax check、manifest JSON parse、git diff --check 通過。
 - [x] token 競態、prompt 安全界線、Codex read-only invocation、SSE terminal event、Agent 設定保存等回歸測試已納入。
 
@@ -2714,6 +2752,7 @@ git commit -m "docs(prreview): 新增安裝與使用說明"
 - [ ] 載入未封裝 extension，確認 Azure DevOps Cloud PR 頁面能 mount 側邊欄。
 - [ ] 儲存 daemon URL／token、測試連線，重新整理後確認 Agent 選擇保留。
 - [ ] 拖曳寬度、鍵盤調整、關閉與右下角圖示重開。
+- [ ] 收合或展開「設定」區後重新整理，確認狀態會從瀏覽器偏好還原。
 - [ ] 在已授權的真實 PR 分別執行 Claude 與 Codex，確認 progress、findings 與 raw fallback。
 - [ ] 停止或重啟 daemon 後確認 token 仍可使用；刪除 token 檔後確認重新產生流程。
 
@@ -2723,7 +2762,7 @@ git commit -m "docs(prreview): 新增安裝與使用說明"
 
 下一階段可拆成：
 
-- M2：逐則確認後寫回 PR comment、取消 job、結果持久化與歷史列表。
+- M2：PR 歷史與結果持久化、中文 severity 與明確 verdict、逐則確認後寫回 PR comment、取消 job。
 - M3：daemon 服務化或自動啟動、自訂 prompt、severity 規則與模型選擇器。
 
 任何後續功能都必須保留目前的 localhost、token、唯讀 MCP 與 prompt injection 防護邊界。

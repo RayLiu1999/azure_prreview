@@ -7,7 +7,7 @@
 
 在 Azure DevOps Cloud 的 Pull Request 詳細頁提供一個唯讀 AI code review 面板。使用者可以選擇本機 Claude 或 Codex CLI，讓 daemon 透過 Azure DevOps MCP 讀取 PR 與相關檔案，逐步回報進度，最後顯示結構化 findings。
 
-目前設計刻意不寫回 PR。審核結果只用於當次頁面上的人工判斷；comment、歷史結果與自動修正屬於後續範圍。
+目前設計刻意不寫回 PR。審核結果先提供當次頁面的人工判斷；PR 範圍的歷史結果已由目前功能分支提供，自動修正仍屬於後續範圍。
 
 ## 2. 範圍與決策
 
@@ -18,9 +18,10 @@
 | 執行位置 | 本機 Node.js daemon | CLI、MCP 登入狀態與長時間 job 不適合放在 extension |
 | 連線方式 | content script 直連 localhost daemon + SSE | 避免 MV3 service worker 生命週期中斷長時間 review |
 | Agent 選擇 | claude 或 codex，預設 claude | 每次 review 可選 provider；選擇保存於 chrome.storage.local |
+| 設定區狀態 | 預設展開；展開／收合狀態保存於 chrome.storage.local | 重新整理或重新進入 PR 時沿用使用者偏好 |
 | 模型選擇 | 暫不提供模型欄位 | provider 直接使用本機 CLI 的預設或設定模型，避免複製 CLI 設定 |
 | 審核輸入 | PR 識別資料與 repository 內容 | 不 clone repository，也不直接操作 Azure DevOps DOM |
-| 審核輸出 | summary + findings JSON；解析失敗時保留 raw text | UI 可以排序與逐則閱讀，也保留診斷資訊 |
+| 審核輸出 | summary + verdict + findings JSON；解析失敗時保留 raw text | UI 顯示中文結論、severity 說明、數量與逐則 findings |
 | 寫回 PR | 目前不提供 | review 全程唯讀，避免誤留言或權限擴大 |
 | UI | 右側 Shadow DOM 面板，可調寬度、可收合 | 不污染 Azure DevOps CSS；收合後由右下角圖示重開 |
 | daemon 安全 | 127.0.0.1 + X-PRReview-Token + CORS allowlist | 限制本機與允許的 Azure DevOps origin |
@@ -31,7 +32,7 @@
     Azure DevOps PR page
       └─ content.js / content-module.js
            ├─ parsePrUrl()
-           ├─ settings.js  ←→ chrome.storage.local
+           ├─ settings.js  ←→ chrome.storage.local（連線、Agent 與側邊欄偏好）
            ├─ client.js    ←→ POST /review、GET /jobs/.../events
            └─ sidebar.js   ←→ Shadow DOM UI
                                │
@@ -45,7 +46,7 @@
                                   ├─ claude.js → Claude CLI + temporary MCP config
                                   └─ codex.js  → Codex CLI + isolated MCP config
 
-daemon 不依賴 extension 的 service worker。job 在 daemon 記憶體中執行與保留有限完成記錄；daemon 重啟後 job 與結果都會消失。
+daemon 不依賴 extension 的 service worker。執行中的 job 在 daemon 記憶體中保存；完成結果會寫入本機 history store，daemon 重啟後仍可由目前 PR 查詢。
 
 ## 4. Review data flow
 
@@ -66,6 +67,7 @@ daemon 不依賴 extension 的 service worker。job 在 daemon 記憶體中執�
 | GET | /auth | token | 測試瀏覽器設定是否有效 |
 | POST | /review | token | 建立 review job |
 | GET | /jobs/{jobId}/events | token | 讀取 SSE 進度與結果 |
+| GET | /history | token | 讀取目前 PR 的歷史結果 |
 
 POST /review 只接受：
 
@@ -103,6 +105,7 @@ org、project、repo 會拒絕空值、控制字元、斜線與過長輸入；pr
 - 標題列關閉按鈕會隱藏面板；右下角浮動 AI 按鈕會重新開啟。
 - PR URL 不再符合格式時，content module 會解除 mount、移除事件與還原原本的 body margin。
 - Agent 選擇會立即寫入 chrome.storage.local。初始化設定非同步回來時，如果使用者已先選擇，該選擇不會被舊值覆蓋。
+- 「設定」區展開／收合會立即寫入 chrome.storage.local；缺少或無效的狀態值預設為展開。
 - review 執行中停用 Agent 選單與開始按鈕；目前 UI 沒有取消 job 的按鈕。
 
 ## 8. 安全模型
@@ -158,12 +161,31 @@ runner.js 只負責 provider facade；provider 內含 CLI invocation 與 MCP 隔
 
 ## 11. 驗證與目前狀態
 
-- daemon 單元與整合測試：84 passed。
-- extension 測試：25 passed。
+- daemon 單元與整合測試：94 passed。
+- extension 測試：31 passed。
 - JavaScript syntax check、manifest JSON parse 與 git diff --check 已通過。
 - Windows 腳本已驗證 token 不存在時會回報錯誤，不會複製空值。
 - 真實 PR 的 Codex 唯讀流程曾用於整合驗證；Claude 的真實 PR 重跑需要另外取得授權後再執行，文件不把未執行的 live run 當成通過。
 
 ## 12. 後續里程碑
 
-M2 可處理逐則確認後寫回 comment、取消目前 job、結果持久化與歷史列表。M3 再評估 daemon 服務化、自動啟動、自訂 prompt、severity 規則與模型選擇器。這些項目不應削弱目前的唯讀與本機隔離邊界。
+M2 先完成依 `organization / project / repository / prId` 分區的結果持久化與歷史列表，並加入 `verdict`（`pass`／`needs_changes`）、中文 severity 標籤、說明與數量。接著再評估逐則確認後寫回 comment 與取消目前 job。
+
+M3 再評估 daemon 服務化、自動啟動、自訂 prompt、severity 規則與模型選擇器。這些項目不應削弱目前的唯讀與本機隔離邊界。
+
+### 12.1 PR 歷史需求
+
+- 歷史查詢只回傳目前 PR 的結果；PR 身分由 organization、project、repository、prId 組成。
+- 每筆記錄至少包含建立時間、Agent、verdict、summary 與 findings；資料保存於 daemon 可重啟後讀取的本機 store。
+- 空歷史、store 讀取失敗與舊資料格式都要有明確 UI 狀態，不影響啟動新的 review。
+
+### 12.2 審核結論與 severity 需求
+
+- 結果 schema 新增 `verdict`；有 blocker 或 major 時為 `needs_changes`，只有 minor／nit 或沒有 finding 時為 `pass`。
+- UI 對應中文標籤：blocker「阻擋合併」、major「重大問題」、minor「次要問題」、nit「格式建議」，並顯示簡短說明與各級數量。
+- verdict 是 AI 審核提供的建議結論，需與 summary 和 findings 一起保存；無法通過 schema 驗證時維持 raw fallback，不產生預設的 pass。
+
+### 12.3 側邊欄設定狀態需求
+
+- 設定區的展開／收合狀態保存於 `chrome.storage.local`，不與 PR 歷史資料混用。
+- 側邊欄建立時套用保存狀態；沒有狀態或資料格式不正確時預設展開。

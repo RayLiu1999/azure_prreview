@@ -1,6 +1,6 @@
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { checkConnection, startReview, streamJob } from '../client.js'
+import { checkConnection, getHistory, startReview, streamJob } from '../client.js'
 
 const settings = { daemonUrl: 'http://127.0.0.1:7797', token: 't'.repeat(64), agent: 'claude' }
 const originalFetch = globalThis.fetch
@@ -23,6 +23,29 @@ test('startReview 將 daemon 錯誤轉成可讀訊息', async () => {
   await assert.rejects(() => startReview({}, settings), /壞請求/)
   globalThis.fetch = async () => new Response('{}', { status: 401 })
   await assert.rejects(() => startReview({}, settings), /token 無效/)
+})
+
+test('getHistory 傳送目前 PR 查詢條件並回傳歷史', async () => {
+  let request
+  globalThis.fetch = async (url, init) => {
+    request = { url: String(url), init }
+    return new Response(JSON.stringify({ items: [{ id: 'job-1', verdict: 'pass' }] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+  const items = await getHistory({ org: 'o/o', project: 'p p', repo: 'r', prId: 7 }, settings)
+  const url = new URL(request.url)
+  assert.equal(url.pathname, '/history')
+  assert.deepEqual(Object.fromEntries(url.searchParams), { org: 'o/o', project: 'p p', repo: 'r', prId: '7' })
+  assert.equal(request.init.headers['X-PRReview-Token'], settings.token)
+  assert.deepEqual(items, [{ id: 'job-1', verdict: 'pass' }])
+})
+
+test('getHistory 沒有有效回應時回報錯誤', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: 'token 無效或未提供' }), { status: 401 })
+  await assert.rejects(() => getHistory({ org: 'o', project: 'p', repo: 'r', prId: 7 }, settings), /token 無效/)
+  await assert.rejects(() => getHistory({}, { ...settings, token: '' }), /尚未設定 daemon URL 或 token/)
 })
 
 test('checkConnection 傳送 token 並驗證 daemon', async () => {

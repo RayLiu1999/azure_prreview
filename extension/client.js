@@ -21,6 +21,24 @@ export async function startReview(pr, settings) {
   return body.jobId
 }
 
+export async function getHistory(pr, settings) {
+  if (!settings?.daemonUrl || !settings.token) throw new Error('尚未設定 daemon URL 或 token。')
+  const query = new URLSearchParams({
+    org: pr.org,
+    project: pr.project,
+    repo: pr.repo,
+    prId: String(pr.prId),
+  })
+  const res = await fetch(`${settings.daemonUrl}/history?${query.toString()}`, {
+    headers: { 'X-PRReview-Token': settings.token },
+  })
+  let body = null
+  try { body = await res.json() } catch {}
+  if (!res.ok) throw new Error(messageFromResponse(res.status, body))
+  if (!body || !Array.isArray(body.items)) throw new Error('daemon 回傳的歷史格式無效。')
+  return body.items
+}
+
 export async function checkConnection(settings) {
   if (!settings?.daemonUrl || !settings.token) throw new Error('請先填入 daemon URL 與 token。')
   const res = await fetch(`${settings.daemonUrl}/auth`, {

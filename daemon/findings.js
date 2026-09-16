@@ -1,4 +1,5 @@
 const SEVERITIES = new Set(['blocker', 'major', 'minor', 'nit'])
+const VERDICTS = new Set(['pass', 'needs_changes'])
 const FENCE = /```(?:json)?\s*([\s\S]*?)```/
 
 function isFindingsPayload(value) {
@@ -78,6 +79,12 @@ function normalizeSeverity(value) {
   return SEVERITIES.has(lower) ? lower : 'minor'
 }
 
+export function determineVerdict(findings) {
+  return findings.some(finding => finding.severity === 'blocker' || finding.severity === 'major')
+    ? 'needs_changes'
+    : 'pass'
+}
+
 function normalizeFinding(raw) {
   if (!raw || typeof raw !== 'object') return null
   if (typeof raw.file !== 'string' || !raw.file) return null
@@ -96,9 +103,19 @@ export function parseFindings(text) {
   if (!parsed) {
     return { ok: false, raw }
   }
+  const normalized = parsed.findings.map(normalizeFinding)
+  const findings = normalized.filter(Boolean)
+  const hasInvalidFinding = findings.length !== parsed.findings.length
+  const suppliedVerdict = typeof parsed.verdict === 'string' ? parsed.verdict.toLowerCase() : null
+  const verdict = hasInvalidFinding
+    ? null
+    : suppliedVerdict && VERDICTS.has(suppliedVerdict)
+      ? determineVerdict(findings)
+      : null
   return {
     ok: true,
     summary: typeof parsed.summary === 'string' ? parsed.summary : '',
-    findings: parsed.findings.map(normalizeFinding).filter(Boolean),
+    verdict,
+    findings,
   }
 }

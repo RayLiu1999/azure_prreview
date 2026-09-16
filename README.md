@@ -8,7 +8,9 @@
 
 - 支援 Azure DevOps Cloud 的 dev.azure.com 與 *.visualstudio.com PR 網址。
 - 側邊欄可選 Claude 或 Codex，選擇會保存於瀏覽器的 chrome.storage.local；重新整理或重新進入 PR 後會沿用上次選擇。
-- 審核進度透過 SSE 即時顯示，完成後依 blocker、major、minor、nit 顯示 findings。
+- 側邊欄「設定」區的展開／收合狀態也會保存於瀏覽器；重新整理或重新進入 PR 後會沿用上次狀態。
+- 審核進度透過 SSE 即時顯示，完成後以中文顯示結論、severity 分級、說明與 findings 數量。
+- 審核結果會保存於本機，進入不同 PR 時只顯示該 PR 的歷史紀錄；可點選歷史項目重新查看結果。
 - 側邊欄可以用滑鼠拖曳左側邊界調整寬度，也可以用左右方向鍵、Home、End 調整。
 - 側邊欄可關閉；關閉後右下角的 AI 圖示可以重新開啟。
 - daemon 只在本機 loopback 監聽，使用隨機 token 保護請求。
@@ -77,10 +79,10 @@ Chrome 142 以上第一次由 Azure DevOps 連到 127.0.0.1 時，可能顯示�
 
 1. 確認側邊欄的 Agent 選擇正確。選擇變更會立即保存到瀏覽器；執行中的審核不能切換 Agent。
 2. 按「開始審核」。
-3. 等待工具呼叫與文字進度。完成後會顯示總評與 findings。
+3. 等待工具呼叫與文字進度。完成後會顯示「目前 PR 可通過」或「需要修改後再通過」、總評與 findings。
 4. 若 Agent 沒有回傳可解析的 JSON，側邊欄會改顯示原始文字，方便診斷 prompt 或 CLI 輸出問題。
 
-審核結果目前只存在於當次頁面的側邊欄與 daemon 記憶體中的 job。重新整理頁面、關閉 daemon 或 daemon 重啟後，不提供歷史結果查詢。
+審核結果會寫入設定目錄的 `history.json`，依 organization、project、repository 與 PR 編號分區。執行中的 job 仍只存在於 daemon 記憶體；完成後可在相同 PR 頁面查詢歷史。
 
 ## daemon API
 
@@ -90,6 +92,7 @@ Chrome 142 以上第一次由 Azure DevOps 連到 127.0.0.1 時，可能顯示�
 - GET /auth：驗證 token。
 - POST /review：建立或重用相同 PR 與 Agent 的執行中 job。body 包含 org、project、repo、prId、agent。
 - GET /jobs/{jobId}/events：以 SSE 讀取即時進度與最後結果。
+- GET /history?org=...&project=...&repo=...&prId=...：讀取目前 PR 的歷史結果。
 
 目前沒有 /comment 或其他寫入 PR 的 endpoint。
 
@@ -101,7 +104,7 @@ Chrome 142 以上第一次由 Azure DevOps 連到 127.0.0.1 時，可能顯示�
 - Claude 使用 temporary MCP config、restricted、strict-mcp-config、disable tools 與 allowedTools，只注入五個 Azure DevOps 唯讀工具。
 - Codex 使用 ephemeral、sandbox read-only、ignore-user-config、ignore-rules，並以隔離設定只允許 azure-devops 的五個唯讀工具；shell tool 與 multi-agent 功能關閉。
 - 審核 prompt 將 PR 內容、repository 文件與 AGENTS.md／CLAUDE.md 視為不可信的資料，這些內容不能提高工具權限或要求執行額外操作。
-- 審核 job 只保存在 daemon 記憶體，daemon 停止後即消失。
+- 執行中的審核 job 只保存在 daemon 記憶體；完成結果會保存於本機設定目錄，daemon 重啟後仍可查詢。
 
 允許的 Azure DevOps MCP 工具為：
 
@@ -149,7 +152,7 @@ extension 測試：
     cd extension
     npm test
 
-目前基準測試為 daemon 84 passed、extension 25 passed。修改後至少應執行兩個測試套件，並確認：
+目前基準測試為 daemon 94 passed、extension 29 passed。修改後至少應執行兩個測試套件，並確認：
 
     git diff --check
 
@@ -160,6 +163,7 @@ extension 測試：
         server.js       HTTP、CORS、token 與 SSE
         auth.js         token 產生、讀取與安全寫入
         jobs.js         in-memory job 與 SSE 訂閱
+        history.js      PR 範圍的歷史結果持久化
         runner.js       Claude／Codex provider facade
         claude.js       Claude MCP 隔離設定
         codex.js        Codex MCP 隔離設定與 JSONL parser
@@ -173,7 +177,7 @@ extension 測試：
         sidebar.js      Shadow DOM UI、寬度與開關控制
         sidebar.css     側邊欄樣式
         client.js       daemon HTTP／SSE client
-        settings.js     chrome.storage.local 設定
+        settings.js     chrome.storage.local 設定與側邊欄偏好
         icons/          extension 與重開按鈕圖示
         test/            extension 測試
       scripts/
@@ -186,10 +190,10 @@ extension 測試：
 
 ## 後續工作
 
-尚未納入目前 M1 的項目：
+目前仍待規劃或實作的項目：
 
 - 逐則確認後把 finding 寫回 Azure DevOps PR。
-- 審核結果持久化與歷史紀錄。
 - 側邊欄取消目前執行中 job 的操作。
 - 自動啟動或真正的背景服務；目前提供的是方便手動啟動的 cmd 腳本。
-- 自訂 prompt、severity 規則與模型選擇器。
+- 獨立設定頁 UI。
+- 自訂 prompt、可配置 severity 規則與模型選擇器。

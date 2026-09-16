@@ -16,8 +16,8 @@ function fakeRunFn(events = []) {
   })
 }
 
-async function withServer(runFn, fn) {
-  const server = createServer({ token: TOKEN, jobStore: createJobStore(), runFn })
+async function withServer(runFn, fn, historyStore = null) {
+  const server = createServer({ token: TOKEN, jobStore: createJobStore(), historyStore, runFn })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   const base = `http://127.0.0.1:${server.address().port}`
   try {
@@ -212,6 +212,44 @@ test('不存在的 jobId 回 404', async () => {
 test('SSE 也需要 token', async () => {
   await withServer(fakeRunFn(), async (base) => {
     assert.equal((await fetch(`${base}/jobs/whatever/events`)).status, 401)
+  })
+})
+
+test('/history 需要完整 PR 查詢條件並只回傳目前 PR', async () => {
+  const records = []
+  const historyStore = {
+    async record(value) { records.push(value) },
+    async list(pr) { return records.filter(item => Object.entries(pr).every(([key, value]) => item.pr[key] === value)) },
+  }
+  const runFn = fakeRunFn([{ kind: 'done', result: { ok: true, verdict: 'pass', summary: 'ok', findings: [] } }])
+  await withServer(runFn, async (base) => {
+    const params = new URLSearchParams({ org: PR.org, project: PR.project, repo: PR.repo, prId: String(PR.prId) })
+    const empty = await fetch(`${base}/history?${params}`, { headers: { 'X-PRReview-Token': TOKEN } })
+    assert.equal(empty.status, 200)
+    assert.deepEqual(await empty.json(), { items: [] })
+
+    const postResponse = await post(base, PR)
+    const { jobId } = await postResponse.json()
+    const events = await fetch(`${base}/jobs/${jobId}/events`, { headers: { 'X-PRReview-Token': TOKEN } })
+    for await (const chunk of events.body) chunk
+
+    const result = await fetch(`${base}/history?${params}`, { headers: { 'X-PRReview-Token': TOKEN } })
+    const body = await result.json()
+    assert.equal(result.status, 200)
+    assert.equal(body.items.length, 1)
+    assert.equal(body.items[0].pr.prId, PR.prId)
+    assert.equal(body.items[0].verdict, 'pass')
+
+    const other = new URLSearchParams({ org: PR.org, project: PR.project, repo: PR.repo, prId: '2' })
+    assert.deepEqual((await (await fetch(`${base}/history?${other}`, { headers: { 'X-PRReview-Token': TOKEN } })).json()), { items: [] })
+    assert.equal((await fetch(`${base}/history?org=${PR.org}`, { headers: { 'X-PRReview-Token': TOKEN } })).status, 400)
+  }, historyStore)
+})
+
+test('/history 沒有 token 回 401', async () => {
+  await withServer(fakeRunFn(), async (base) => {
+    const params = new URLSearchParams({ org: PR.org, project: PR.project, repo: PR.repo, prId: String(PR.prId) })
+    assert.equal((await fetch(`${base}/history?${params}`)).status, 401)
   })
 })
 

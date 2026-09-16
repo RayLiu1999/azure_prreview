@@ -11,7 +11,7 @@ export function createJobStore({ maxCompleted = 100 } = {}) {
       if (byKey.get(job.key) === job) byKey.delete(job.key)
     }
   }
-  function start(key, runFn) {
+  function start(key, runFn, metadata = {}) {
     const previous = byKey.get(key)
     if (previous?.status === 'running') previous.cancel()
     const subscribers = new Set()
@@ -19,6 +19,10 @@ export function createJobStore({ maxCompleted = 100 } = {}) {
     const deliver = (fn, event) => { try { fn(event) } catch {} }
     const job = {
       id: randomUUID(), key, status: 'running', history: [],
+      pr: metadata.pr,
+      agent: metadata.agent,
+      onTerminal: metadata.onTerminal,
+      startedAt: metadata.startedAt || new Date().toISOString(),
       subscribe(fn) {
         for (const event of job.history) deliver(fn, event)
         if (job.status === 'running') subscribers.add(fn)
@@ -29,7 +33,10 @@ export function createJobStore({ maxCompleted = 100 } = {}) {
     function emit(event) {
       if (job.status !== 'running') return
       job.history.push(event)
-      if (event.kind === 'done' || event.kind === 'error') job.status = event.kind
+      if (event.kind === 'done' || event.kind === 'error') {
+        job.status = event.kind
+        try { void Promise.resolve(job.onTerminal?.(job, event)).catch(() => {}) } catch {}
+      }
       for (const fn of [...subscribers]) deliver(fn, event)
       if (job.status !== 'running') { subscribers.clear(); prune() }
     }

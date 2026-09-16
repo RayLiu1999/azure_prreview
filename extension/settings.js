@@ -2,6 +2,7 @@ const DEFAULTS = Object.freeze({
   daemonUrl: 'http://127.0.0.1:7797',
   token: '',
   agent: 'claude',
+  settingsOpen: true,
 })
 
 function normalizeDaemonUrl(value) {
@@ -25,6 +26,7 @@ export async function getSettings() {
   return {
     ...normalized,
     agent: merged.agent === 'codex' ? 'codex' : 'claude',
+    settingsOpen: typeof merged.settingsOpen === 'boolean' ? merged.settingsOpen : DEFAULTS.settingsOpen,
   }
 }
 
@@ -48,6 +50,12 @@ export async function clearToken() {
 export async function setAgent(agent) {
   if (agent !== 'claude' && agent !== 'codex') throw new Error('未知的 Agent')
   await chrome.storage.local.set({ agent })
+}
+
+export async function setSettingsOpen(open) {
+  const settingsOpen = Boolean(open)
+  await chrome.storage.local.set({ settingsOpen })
+  return settingsOpen
 }
 
 export { DEFAULTS, normalizeDaemonUrl }

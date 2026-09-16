@@ -141,3 +141,18 @@ test('訂閱者拋錯不會拖垮其他訂閱者', async () => {
   assert.equal(seen[0].text, 'hi')
   assert.equal(seen[1].kind, 'error')
 })
+
+test('terminal event 會通知完成回呼並帶出 PR metadata', async () => {
+  const completed = []
+  const store = createJobStore()
+  const job = store.start(
+    'pr-1',
+    fakeRun([{ kind: 'done', result: { ok: true, verdict: 'pass', summary: 's', findings: [] } }]),
+    { pr: { org: 'o', project: 'p', repo: 'r', prId: 1 }, agent: 'claude', onTerminal: (value, event) => completed.push({ value, event }) }
+  )
+  await settle()
+  assert.equal(job.status, 'done')
+  assert.equal(completed.length, 1)
+  assert.equal(completed[0].value.pr.prId, 1)
+  assert.equal(completed[0].event.kind, 'done')
+})

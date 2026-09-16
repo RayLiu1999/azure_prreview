@@ -1,7 +1,7 @@
 import { parsePrUrl } from './prurl.js'
 import { createSidebar } from './sidebar.js'
-import { clearToken, getSettings, normalizeSettings, saveSettings, setAgent } from './settings.js'
-import { checkConnection, startReview, streamJob } from './client.js'
+import { clearToken, getSettings, normalizeSettings, saveSettings, setAgent, setSettingsOpen } from './settings.js'
+import { checkConnection, getHistory, startReview, streamJob } from './client.js'
 
 const DEFAULT_PANEL_WIDTH = 380
 let host = null
@@ -19,6 +19,8 @@ function applyBodyMargin() {
 
 function mount() {
   if (host) return
+  const pr = parsePrUrl(location.href)
+  if (!pr) return
   host = document.createElement('div')
   host.id = 'prreview-host'
   const shadow = host.attachShadow({ mode: 'open' })
@@ -34,17 +36,41 @@ function mount() {
   panelWidth = DEFAULT_PANEL_WIDTH
   sidebar.onWidthChange(width => { panelWidth = width; applyBodyMargin() })
   sidebar.onVisibilityChange(() => applyBodyMargin())
+  sidebar.onSettingsOpenChange(open => {
+    void setSettingsOpen(open).catch(error => {
+      if (sidebar === instance) instance.setSettingsStatus(error?.message || '設定收合狀態儲存失敗。', 'error')
+    })
+  })
   applyBodyMargin()
   sidebar.setState({ phase: 'idle' })
   void getSettings().then(settings => {
     if (sidebar !== instance) return
     if (!agentChangedByUser) instance.setAgent(settings.agent)
     instance.setSettings(settings)
+    instance.setSettingsOpen(settings.settingsOpen)
+    void loadHistory(instance, pr, settings)
   }).catch(() => {})
   sidebar.onAgentChange(agent => {
     agentChangedByUser = true
     void setAgent(agent).catch(error => {
       if (sidebar === instance) instance.setSettingsStatus(error?.message || 'Agent 設定儲存失敗。', 'error')
+    })
+  })
+  sidebar.onHistorySelect(item => {
+    if (sidebar !== instance || !item) return
+    if (item.raw && (!item.verdict || item.status === 'error')) {
+      instance.setState({ phase: 'raw', text: item.raw })
+      return
+    }
+    if (item.status === 'error' || !item.verdict) {
+      instance.setState({ phase: 'error', message: '這筆歷史結果沒有可用的結論。' })
+      return
+    }
+    instance.setState({
+      phase: 'results',
+      summary: item.summary,
+      verdict: item.verdict,
+      findings: item.findings,
     })
   })
   sidebar.onSettingsSave(async draft => {
@@ -55,6 +81,7 @@ function mount() {
       if (sidebar !== instance) return
       instance.setSettings(settings)
       instance.setSettingsStatus('設定已儲存。', 'success')
+      void loadHistory(instance, pr, settings)
     } catch (error) {
       if (sidebar === instance) instance.setSettingsStatus(error?.message || '設定儲存失敗。', 'error')
     } finally {
@@ -69,6 +96,7 @@ function mount() {
       if (sidebar !== instance) return
       instance.setSettings(settings)
       instance.setSettingsStatus('Token 已清除。', 'success')
+      instance.setHistory([], 'error')
     } catch (error) {
       if (sidebar === instance) instance.setSettingsStatus(error?.message || 'Token 清除失敗。', 'error')
     } finally {
@@ -112,12 +140,28 @@ async function review(instance) {
       else if (event.kind === 'text') instance.setState({ phase: 'running', progress: event.text })
       else if (event.kind === 'error') instance.setState({ phase: 'error', message: event.message })
       else if (event.kind === 'done') instance.setState(event.result?.ok
-        ? { phase: 'results', summary: event.result.summary, findings: event.result.findings }
+        ? { phase: 'results', summary: event.result.summary, verdict: event.result.verdict, findings: event.result.findings }
         : { phase: 'raw', text: event.result?.raw || '' })
     })
+    await loadHistory(instance, pr, settings)
   } catch (error) {
     if (sidebar !== instance) return
     instance.setState({ phase: 'error', message: error instanceof TypeError ? 'daemon 未連線。請先執行：cd prreview/daemon && npm start' : error.message })
+  }
+}
+
+async function loadHistory(instance, pr, settings) {
+  if (sidebar !== instance) return
+  if (!settings?.token) {
+    instance.setHistory([], 'error')
+    return
+  }
+  instance.setHistory([], 'loading')
+  try {
+    const items = await getHistory(pr, settings)
+    if (sidebar === instance) instance.setHistory(items)
+  } catch {
+    if (sidebar === instance) instance.setHistory([], 'error')
   }
 }
 
