@@ -10,7 +10,7 @@
 
 **Spec:** `prreview/docs/superpowers/specs/2026-09-15-prreview-design.md`
 
-## 實作進度（2026-09-15）
+## 原始實作進度（2026-09-15）
 
 - Task 1–4 已完成，包含測試與邊界處理。
 - Task 5 Claude prompt／執行器已完成；Claude 執行器會從使用者 MCP 設定只注入 `azure-devops` server，避免 `--restricted` 排除必要 MCP。
@@ -18,8 +18,37 @@
 - Task 8–9 的程式實作與自動測試已完成：插件外殼、Shadow DOM 側邊欄、設定儲存與 token 連線檢查、Visual Studio 網址支援、daemon client 與 SSE 串接。
 - Task 10 README 已完成；瀏覽器手動驗收仍待實機操作。
 - 真實 Codex PR 67066 唯讀審核已完成：讀取 PR、5 個變更檔案、`CLAUDE.md` 與相關呼叫端／測試，共 51 個 MCP 事件，findings 為空。
-- 驗證：daemon `node --test` 79/79、extension `node --test` 23/23，JavaScript 語法與 JSON manifest／schema 檢查通過。
+- 驗證：初版測試與語法檢查曾通過；目前數字與完成度以本文件「目前實作狀態」及「M1 目前驗證結果」為準。
 - Git 已移至 `prreview/.git`；父層 `Extension/.git` 的原始 metadata 保存在 `prreview/.git/legacy-extension.git`，未改寫原歷史。
+
+## 目前實作狀態（2026-09-16）
+
+本節是本計畫的現況來源；下方 Task 1～10 保留原始實作步驟與決策軌跡，部分舊 checkbox 與當時的測試數字不代表目前狀態。
+
+### 已完成
+
+- daemon 以本機 Node.js HTTP/SSE 服務執行，token 會安全建立並保存於設定目錄；同時啟動的程序不會互相覆蓋 token。
+- Claude 與 Codex provider 都使用隔離的 Azure DevOps MCP 設定與唯讀工具。Claude 使用 restricted／strict-mcp-config；Codex 使用 read-only sandbox、隔離 MCP、停用 shell 與 multi-agent。
+- review prompt 明確把 PR 內容、repository 文件與 AGENTS.md／CLAUDE.md 視為不可信資料，不能提高工具權限。
+- findings parser 能從 CLI 的前後置文字中擷取結構化 JSON；無法驗證時會回傳 raw text。SSE 若沒有 done 或 error terminal event 會被視為失敗。
+- extension 設定頁支援 daemon URL、token、測試連線與清除 token。Agent 選擇會寫入 chrome.storage.local，初始化非同步載入不會覆蓋使用者剛選的值。
+- 右側面板支援 280～720px 寬度、滑鼠拖曳、方向鍵、Home、End、關閉與右下角圖示重新開啟；離開 PR 頁面時會清理事件並還原 body margin。
+- 專案根目錄提供 start-daemon.cmd；scripts/copy-token.cmd 與 scripts/copy-token.ps1 可在 Windows 將 token 複製到剪貼簿而不印出 token。
+- 自動驗證：daemon 84 passed、extension 25 passed；JavaScript syntax、manifest JSON 與 git diff --check 已通過。
+
+### 尚待手動驗證
+
+- 在瀏覽器載入未封裝 extension，完成一次 Azure DevOps Cloud PR 的端到端流程。
+- 分別以 Claude 與 Codex 執行真實 PR review，確認即時進度、結果與 raw fallback。先前已取得的是 Codex 唯讀審核授權；未取得額外授權前，不把 Claude live rerun 當作已完成。
+- 確認 Chrome 142 以上的本機網路存取提示、錯誤 token、daemon 重啟與非 PR URL unmount 行為。
+
+### 目前明確不在 M1
+
+- finding 寫回 PR、comment endpoint 與任何 repository 寫入。
+- review 結果持久化、歷史查詢與跨 daemon 重啟恢復。
+- 側邊欄取消執行中 job 的按鈕。
+- 自動啟動或真正的背景服務；現階段只有方便手動啟動的 Windows cmd 腳本。
+- 自訂 prompt、severity 規則與模型選擇器。Agent 選單目前選 provider，模型沿用本機 CLI 預設。
 
 ## Global Constraints
 
@@ -34,7 +63,7 @@
 - **Claude MCP 隔離**：`--restricted` 搭配 `--strict-mcp-config`，執行時只從暫存設定載入 `azure-devops` server，再以 `--allowedTools` 限定五個唯讀工具。
 - **不要求兩個 CLI 同時存在**：只要所選 Agent 可執行且已設定 `azure-devops` MCP 即可；缺少另一個不影響 review。
 - **平台限定** Azure DevOps Cloud：`dev.azure.com` 與 `*.visualstudio.com`；不支援自架 Server。
-- **commit 格式**：`<type>(<scope>): <subject> [no-issue]`，scope 一律為 `prreview`，訊息用繁體中文。
+- **commit 格式**：使用 type(scope): subject；type 與 scope 用英文，subject 用繁體中文；沒有 Azure DevOps work item 時省略 issue suffix。
 - **M1 不實作**：發 PR 留言、獨立設定頁 UI、自訂 prompt、結果快取、取消按鈕。Agent 下拉選單屬於核心流程，直接放在側邊欄。
 - **severity 列舉值**（全專案一致，不得自創）：`blocker` / `major` / `minor` / `nit`。
 
@@ -42,40 +71,45 @@
 
 ## File Structure
 
-```
-prreview/
-  daemon/
-    package.json       Node 專案宣告（type: module、start/test script）
-    auth.js            token 產生、讀寫、比對          ← 純函式 + 檔案 I/O
-    stream.js          claude stream-json → 進度事件    ← 純函式
-    codex.js           Codex 隔離設定、JSONL 解析與執行  ← provider adapter
-    claude.js          Claude Azure DevOps MCP 暫存設定  ← provider adapter
-    findings.js        findings JSON 驗證與正規化       ← 純函式
-    runner.js          選擇 provider、組 prompt          ← provider facade
-    jobs.js            job 生命週期與訂閱者管理
-    server.js          HTTP 路由、CORS、token 驗證、SSE  ← 唯一接觸網路
-    prompts/review.md  內建審核 prompt
-    prompts/findings.schema.json  Codex 結構化輸出 schema
-    test/              auth / claude / stream / codex / findings / jobs / server 各一支
-  extension/
-    manifest.json
-    prurl.js           PR URL 解析                      ← 純函式，零 chrome 依賴
-    settings.js        設定讀取與儲存（含 agent）          ← 唯一接觸 chrome.storage
-    client.js          daemon HTTP/SSE 客戶端            ← 唯一接觸 fetch
-    sidebar.js         面板渲染（Shadow DOM 內）
-    sidebar.css        面板樣式
-    content.js         注入面板、事件串接                ← 唯一接觸頁面 DOM
-    icons/             icon16.png / icon48.png / icon128.png
-    package.json       僅為了 node --test
-    test/prurl.test.js
-  README.md
-```
+以下樹狀圖反映目前檔案與模組邊界；Task 段落中的舊示意保留作歷史參考。
 
-任務順序刻意把**純函式排在前面**：它們有最快的測試回饋迴圈，且後面的整合任務全都依賴它們的介面。`runner.js`（需要真的跑 claude）排在純函式之後、server 之前。
+    prreview/
+      daemon/
+        package.json
+        server.js          HTTP、CORS、token 與 SSE
+        auth.js            token 產生、讀取與競態安全寫入
+        jobs.js            in-memory job 與 SSE 訂閱
+        runner.js          Claude／Codex provider facade
+        process.js         child process、取消與清理
+        claude.js          Claude MCP temporary config
+        codex.js           Codex MCP 隔離設定、JSONL parser
+        prompt.js          review prompt 與唯讀工具清單
+        findings.js        findings schema 驗證與 JSON 擷取
+        stream.js          Claude stream-json parser
+        prompts/
+          review.md
+          findings.schema.json
+        test/
+      extension/
+        manifest.json
+        content.js         content script 入口
+        content-module.js  PR 偵測、設定、review 與 layout
+        prurl.js           Azure DevOps PR URL parser
+        settings.js        chrome.storage.local 設定
+        client.js          daemon HTTP／SSE client
+        sidebar.js         Shadow DOM UI、寬度與開關
+        sidebar.css
+        icons/
+        test/
+      scripts/
+        copy-token.cmd
+        copy-token.ps1
+      start-daemon.cmd
+      README.md
+      docs/superpowers/specs/
+      docs/superpowers/plans/
 
----
-
-### Task 1: daemon 骨架與 token 機制
+---### Task 1: daemon 骨架與 token 機制
 
 **Files:**
 - Create: `prreview/daemon/package.json`
@@ -217,7 +251,7 @@ Expected: PASS，8 個測試全過
 
 ```bash
 git add prreview/daemon/package.json prreview/daemon/auth.js prreview/daemon/test/auth.test.js
-git commit -m "feat(prreview): 新增 daemon token 產生與驗證 [no-issue]"
+git commit -m "feat(prreview): 新增 daemon token 產生與驗證"
 ```
 
 ---
@@ -434,7 +468,7 @@ Expected: PASS，12 個測試全過
 
 ```bash
 git add prreview/daemon/stream.js prreview/daemon/test/stream.test.js
-git commit -m "feat(prreview): 新增 claude stream-json 事件解析 [no-issue]"
+git commit -m "feat(prreview): 新增 claude stream-json 事件解析"
 ```
 
 ---
@@ -645,7 +679,7 @@ Expected: PASS，14 個測試全過
 
 ```bash
 git add prreview/daemon/findings.js prreview/daemon/test/findings.test.js
-git commit -m "feat(prreview): 新增 findings 驗證與降級處理 [no-issue]"
+git commit -m "feat(prreview): 新增 findings 驗證與降級處理"
 ```
 
 ---
@@ -794,7 +828,7 @@ Expected: PASS，11 個測試全過
 
 ```bash
 git add prreview/extension/package.json prreview/extension/prurl.js prreview/extension/test/prurl.test.js
-git commit -m "feat(prreview): 新增 Azure DevOps PR 網址解析 [no-issue]"
+git commit -m "feat(prreview): 新增 Azure DevOps PR 網址解析"
 ```
 
 ---
@@ -1059,7 +1093,7 @@ Expected:
 ```bash
 rm -f prreview/daemon/scratch-run.js prreview/daemon/scratch-missing.js
 git add prreview/daemon/runner.js prreview/daemon/prompts/review.md
-git commit -m "feat(prreview): 新增審核 prompt 與 claude 執行器 [no-issue]"
+git commit -m "feat(prreview): 新增審核 prompt 與 claude 執行器"
 ```
 
 ---
@@ -1221,7 +1255,7 @@ Expected：兩者都會輸出共同格式的進度事件，最後為 `done`；Co
 
 ```bash
 git add prreview/daemon/codex.js prreview/daemon/runner.js prreview/daemon/prompts/findings.schema.json prreview/daemon/test/codex.test.js
-git commit -m "feat(prreview): 新增 Codex 審核 provider 與隔離設定 [no-issue]"
+git commit -m "feat(prreview): 新增 Codex 審核 provider 與隔離設定"
 ```
 
 ---
@@ -1476,7 +1510,7 @@ Expected: PASS，11 個測試全過
 
 ```bash
 git add prreview/daemon/jobs.js prreview/daemon/test/jobs.test.js
-git commit -m "feat(prreview): 新增 job 生命週期與訂閱管理 [no-issue]"
+git commit -m "feat(prreview): 新增 job 生命週期與訂閱管理"
 ```
 
 ---
@@ -1914,7 +1948,7 @@ Expected: 印出啟動訊息、Claude／Codex 可用狀態與 token；缺少其�
 
 ```bash
 git add prreview/daemon/server.js prreview/daemon/test/server.test.js
-git commit -m "feat(prreview): 新增 daemon HTTP server 與 SSE 推送 [no-issue]"
+git commit -m "feat(prreview): 新增 daemon HTTP server 與 SSE 推送"
 ```
 
 ---
@@ -2357,7 +2391,7 @@ Expected:
 
 ```bash
 git add prreview/extension/manifest.json prreview/extension/settings.js prreview/extension/sidebar.css prreview/extension/sidebar.js prreview/extension/content.js prreview/extension/icons
-git commit -m "feat(prreview): 新增側邊欄注入與渲染 [no-issue]"
+git commit -m "feat(prreview): 新增側邊欄注入與渲染"
 ```
 
 ---
@@ -2529,7 +2563,7 @@ Expected:
 
 ```bash
 git add prreview/extension/client.js prreview/extension/content.js
-git commit -m "feat(prreview): 串接 daemon 完成端到端審核流程 [no-issue]"
+git commit -m "feat(prreview): 串接 daemon 完成端到端審核流程"
 ```
 
 ---
@@ -2661,29 +2695,35 @@ Expected: 只剩 README.md 未追蹤；`scratch-run.js` 與 `scratch-missing.js`
 
 ```bash
 git add prreview/README.md
-git commit -m "docs(prreview): 新增安裝與使用說明 [no-issue]"
+git commit -m "docs(prreview): 新增安裝與使用說明"
 ```
 
 ---
 
-## M1 驗收標準
+## M1 目前驗證結果
 
-全部滿足才算 M1 完成：
+### 自動驗證
 
-- [ ] `prreview/daemon` 與 `prreview/extension` 的 `node --test` 全數通過
-- [ ] 側邊欄可選 Claude／Codex，重新整理後保留選擇，執行中不可切換
-- [ ] 在同一個真實 PR 分別選 Claude 與 Codex，都能看到即時進度並在數分鐘內得到 findings
-- [ ] 兩個 Agent 的 findings 都確實對應該 PR 的實際變更
-- [ ] daemon 未啟動、token 錯誤、所選 CLI 不存在、Codex MCP 未設定都有明確可行動的訊息
-- [ ] Codex 執行時只載入 Azure DevOps 唯讀 MCP，沒有 file change；任何 command execution 都受 read-only sandbox 限制
-- [ ] 導覽到非 PR 頁面時面板消失且版面復原
-- [ ] 全程沒有對 PR 產生任何寫入
+- [x] daemon 測試全數通過：84 passed。
+- [x] extension 測試全數通過：25 passed。
+- [x] JavaScript syntax check、manifest JSON parse、git diff --check 通過。
+- [x] token 競態、prompt 安全界線、Codex read-only invocation、SSE terminal event、Agent 設定保存等回歸測試已納入。
 
-## M1 之後
+### 瀏覽器與真實服務驗證
 
-**M1 的目的是回答「AI review 的品質夠不夠用」。** 拿到答案再決定下一步：
+- [ ] 載入未封裝 extension，確認 Azure DevOps Cloud PR 頁面能 mount 側邊欄。
+- [ ] 儲存 daemon URL／token、測試連線，重新整理後確認 Agent 選擇保留。
+- [ ] 拖曳寬度、鍵盤調整、關閉與右下角圖示重開。
+- [ ] 在已授權的真實 PR 分別執行 Claude 與 Codex，確認 progress、findings 與 raw fallback。
+- [ ] 停止或重啟 daemon 後確認 token 仍可使用；刪除 token 檔後確認重新產生流程。
 
-- 品質夠用 → 進入 M2（發 PR 留言、設定頁、取消按鈕）
-- 品質不足 → 先調整 `prompts/review.md`，或重新檢視「不給本機 clone」這個決策，**而不是繼續堆 UI**
+## M1 結案與後續
 
-M2 與 M3 各自會有獨立的計畫文件。
+目前 M1 的可交付內容是「本機唯讀 AI review 垂直切片」：PR URL 辨識、設定保存、Agent 選擇、daemon job、Claude／Codex provider、即時 SSE、findings 顯示、raw fallback、唯讀隔離與可操作側邊欄都已實作。真實瀏覽器端到端與兩個 provider 的 live run 仍是手動驗證項目。
+
+下一階段可拆成：
+
+- M2：逐則確認後寫回 PR comment、取消 job、結果持久化與歷史列表。
+- M3：daemon 服務化或自動啟動、自訂 prompt、severity 規則與模型選擇器。
+
+任何後續功能都必須保留目前的 localhost、token、唯讀 MCP 與 prompt injection 防護邊界。

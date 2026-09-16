@@ -1,96 +1,195 @@
 # prreview
 
-在 Azure DevOps 的 Pull Request 頁面上取得 AI 審核意見。
+在 Azure DevOps Cloud 的 Pull Request 詳細頁中，透過瀏覽器側邊欄啟動本機 AI code review。瀏覽器 extension 只負責辨識 PR、顯示進度與結果；Node.js daemon 會呼叫本機的 Claude 或 Codex CLI，讓 CLI 透過已設定的 Azure DevOps MCP 讀取 PR 內容。
 
-插件偵測目前開啟的 PR，呼叫本機 daemon；daemon 依側邊欄選擇驅動 `claude` 或 `codex` CLI，透過所選 CLI 的 `azure-devops` MCP 取得 PR 內容並產出結構化 findings。
+目前的審核流程是唯讀的：它不會修改 repository、建立 commit，也沒有把 finding 自動寫回 PR 的功能。
 
-審核過程全程唯讀，不會對 PR、儲存庫或本機專案內容做寫入。
+## 目前功能
+
+- 支援 Azure DevOps Cloud 的 dev.azure.com 與 *.visualstudio.com PR 網址。
+- 側邊欄可選 Claude 或 Codex，選擇會保存於瀏覽器的 chrome.storage.local；重新整理或重新進入 PR 後會沿用上次選擇。
+- 審核進度透過 SSE 即時顯示，完成後依 blocker、major、minor、nit 顯示 findings。
+- 側邊欄可以用滑鼠拖曳左側邊界調整寬度，也可以用左右方向鍵、Home、End 調整。
+- 側邊欄可關閉；關閉後右下角的 AI 圖示可以重新開啟。
+- daemon 只在本機 loopback 監聽，使用隨機 token 保護請求。
+- 解析不到結構化 JSON 時，側邊欄會保留 Agent 回傳的原始文字，避免結果直接消失。
 
 ## 需求
 
-- Node.js 20 以上
-- 至少安裝並登入一個支援的 Agent：`claude` CLI 或 `codex` CLI
-- 所選 Agent 已設定 `azure-devops` MCP
-- Chrome 或 Edge
+- Node.js 20 以上。
+- 已安裝並完成登入的 Claude CLI 或 Codex CLI，至少需要其中一個。
+- CLI 已設定 Azure DevOps MCP。Codex 可用下列指令確認：
 
-## 安裝
+    codex mcp get azure-devops --json
 
-### 啟動 daemon
+- Chrome 或 Edge。
 
-```text
-cd prreview/daemon
-npm start
-```
+Agent 選單選的是 CLI provider，不是特定模型名稱。目前 UI 沒有模型選擇器；Claude 與 Codex 會使用各自 CLI 的預設或本機設定模型。要更換模型，請依所用 CLI 的設定方式處理。
 
-首次啟動會在 `~/.prreview/token` 產生 token 並印在終端機。daemon 預設只監聽 `127.0.0.1:7797`。
+## 安裝與啟動 daemon
 
-可用環境變數調整：
+### 手動啟動
 
-- `PRREVIEW_PORT`：監聽埠號
-- `PRREVIEW_CONFIG_DIR`：token 儲存目錄
-- `PRREVIEW_CLAUDE`：Claude 執行檔完整路徑
-- `PRREVIEW_CLAUDE_MCP_CONFIG`：Claude MCP 設定檔路徑；未設定時讀取 `~/.claude.json` 的 `azure-devops`
-- `PRREVIEW_CODEX`：Codex 執行檔完整路徑
+在專案根目錄執行：
 
-daemon 會分別檢查兩個 CLI；其中一個不存在不會阻止另一個使用。
+    cd daemon
+    npm start
 
-### 載入插件
+daemon 預設監聽 http://127.0.0.1:7797。
 
-1. 開啟 `chrome://extensions`。
+### Windows 一鍵啟動
+
+直接雙擊專案根目錄的 start-daemon.cmd。腳本會切到 daemon 目錄執行 npm start，並預設使用 %USERPROFILE%/.prreview 作為設定目錄。
+
+daemon 啟動後，使用 scripts/copy-token.cmd 將 token 複製到剪貼簿，再貼到側邊欄的 Token 欄位。copy-token.cmd 不會把 token 印到畫面上；它會呼叫 copy-token.ps1 並使用 Windows 剪貼簿功能。
+
+### Token 生命週期
+
+- token 是 32 bytes 隨機值，以 64 個小寫十六進位字元儲存。
+- 預設檔案是 %USERPROFILE%/.prreview/token；設定 PRREVIEW_CONFIG_DIR 後會改用該目錄。
+- daemon 會重複使用已存在的 token，因此重新啟動 daemon 不會讓瀏覽器設定失效。
+- 要輪替 token，請先停止 daemon，再刪除 token 檔並重新啟動；新的 token 需要重新貼入側邊欄。
+- 這個 token 只保護瀏覽器與本機 daemon 的 HTTP 連線，不取代 Azure DevOps、Claude 或 Codex CLI 的登入認證。
+
+### 環境變數
+
+- PRREVIEW_PORT：daemon 監聽的連接埠，預設 7797。
+- PRREVIEW_CONFIG_DIR：token 儲存目錄，預設 %USERPROFILE%/.prreview。
+- PRREVIEW_CLAUDE：Claude CLI 可執行檔路徑，預設 claude。
+- PRREVIEW_CLAUDE_MCP_CONFIG：Claude MCP JSON 設定檔路徑，預設 ~/.claude.json。
+- PRREVIEW_CODEX：Codex CLI 可執行檔路徑，預設 codex。
+
+啟動時 daemon 會檢查兩個 CLI 是否存在；其中一個未安裝不會阻止另一個 provider 使用。
+
+## 載入瀏覽器 extension
+
+1. 開啟 chrome://extensions。
 2. 開啟「開發人員模式」。
-3. 選擇「載入未封裝項目」，指定 `prreview/extension`。
-4. 開啟 Azure DevOps PR 頁面，在右側面板的「設定」區貼上 daemon 印出的 token，按「儲存設定」。可按「測試連線」確認 token 有效。
+3. 選擇「載入未封裝項目」，指定本專案的 extension 目錄。
+4. 開啟支援的 Azure DevOps PR 詳細頁。
+5. 在側邊欄的「設定」區輸入 daemon URL 與 token，按「儲存設定」；可按「測試連線」確認 token 有效。
 
-插件支援 `https://dev.azure.com/...` 與 `https://{organization}.visualstudio.com/...` 兩種 Azure DevOps Cloud 網址。自架 Server 與其他網域不支援。
+Chrome 142 以上第一次由 Azure DevOps 連到 127.0.0.1 時，可能顯示「本機網路存取」權限提示。請允許該提示，頁面才能連到 daemon。
 
-## 使用
+自架 Azure DevOps Server 與其他網域目前不在支援範圍。
 
-開啟 PR 詳細頁，第一次使用先在右側面板的「設定」區輸入 daemon URL 與 token，按「儲存設定」；之後選擇 Claude 或 Codex，按「開始審核」。進度會即時顯示，完成後列出依嚴重度排序的 findings。設定與 Agent 選擇會保存到瀏覽器本機儲存空間。
+## 使用審核
 
-Claude 執行會使用 `--restricted` 與 `--strict-mcp-config`，從 MCP 設定中只注入 `azure-devops` server；Codex 執行會使用 `--sandbox read-only`、`--ignore-user-config` 與 `--output-schema`，只重新注入 `azure-devops` MCP 的五個唯讀工具。兩個 provider 都只允許這五個唯讀工具。可先執行下列指令確認 MCP：
+1. 確認側邊欄的 Agent 選擇正確。選擇變更會立即保存到瀏覽器；執行中的審核不能切換 Agent。
+2. 按「開始審核」。
+3. 等待工具呼叫與文字進度。完成後會顯示總評與 findings。
+4. 若 Agent 沒有回傳可解析的 JSON，側邊欄會改顯示原始文字，方便診斷 prompt 或 CLI 輸出問題。
 
-```text
-codex mcp get azure-devops --json
-```
+審核結果目前只存在於當次頁面的側邊欄與 daemon 記憶體中的 job。重新整理頁面、關閉 daemon 或 daemon 重啟後，不提供歷史結果查詢。
 
-## severity
+## daemon API
 
-| 等級 | 意義 |
-|------|------|
-| `blocker` | 會造成資料錯誤、安全漏洞或服務中斷，不修不能合併 |
-| `major` | 明確的缺陷，但影響範圍有限 |
-| `minor` | 值得改，但不修也不會出事 |
-| `nit` | 吹毛求疵，作者可自行判斷 |
+所有需要操作的 endpoint 都要在 HTTP header 帶上 X-PRReview-Token。
 
-## 疑難排解
+- GET /health：健康檢查，不需要 token。
+- GET /auth：驗證 token。
+- POST /review：建立或重用相同 PR 與 Agent 的執行中 job。body 包含 org、project、repo、prId、agent。
+- GET /jobs/{jobId}/events：以 SSE 讀取即時進度與最後結果。
 
-| 症狀 | 處理 |
-|------|------|
-| 面板沒出現 | 確認網址是 PR 詳細頁，且使用 `dev.azure.com` 或 `*.visualstudio.com` |
-| daemon 未連線 | 確認 `npm start` 正在執行，且插件使用同一個埠號 |
-| token 無效 | 重新複製 daemon 啟動時印出的 token，在側邊欄「設定」區重新儲存；不要把 token 放進 URL |
-| Claude 找不到 azure-devops MCP | 確認 `claude mcp list` 顯示已連線；設定 `PRREVIEW_CLAUDE_MCP_CONFIG` 指向含有 `mcpServers.azure-devops` 的 JSON 設定檔 |
-| 找不到 Claude 或 Codex | 設定對應的 `PRREVIEW_CLAUDE` 或 `PRREVIEW_CODEX` 完整路徑 |
-| Codex 找不到 MCP | 執行 `codex mcp get azure-devops --json`，確認 server 已啟用 |
-| 結果顯示為純文字 | Agent 沒有符合 JSON 格式，原始文字仍會保留在面板，可重跑審核 |
+目前沒有 /comment 或其他寫入 PR 的 endpoint。
 
-## 安全性
+## 審核安全界線
 
-- daemon 僅監聽 `127.0.0.1`。
-- `/review`、`/auth` 與 SSE 事件都必須帶 token，驗證在解析 body 或啟動 job 前完成。
-- CORS 僅允許 Azure DevOps Cloud 網域。
-- Claude 使用隔離的暫存 MCP 設定，只載入 Azure DevOps server，並僅開放五個唯讀工具。
-- Codex 使用 read-only sandbox 與隔離設定；file change 事件會中止審核。
-- token 等同於在本機啟動 Agent 的權限，請勿外流。
+- daemon 固定綁定 127.0.0.1，不接受外部網路介面連線。
+- 除 /health 外的請求都先驗證 token；token 不放在 URL 或 request body。
+- CORS 只允許 Azure DevOps Cloud origin，並支援瀏覽器的本機網路存取預檢。
+- Claude 使用 temporary MCP config、restricted、strict-mcp-config、disable tools 與 allowedTools，只注入五個 Azure DevOps 唯讀工具。
+- Codex 使用 ephemeral、sandbox read-only、ignore-user-config、ignore-rules，並以隔離設定只允許 azure-devops 的五個唯讀工具；shell tool 與 multi-agent 功能關閉。
+- 審核 prompt 將 PR 內容、repository 文件與 AGENTS.md／CLAUDE.md 視為不可信的資料，這些內容不能提高工具權限或要求執行額外操作。
+- 審核 job 只保存在 daemon 記憶體，daemon 停止後即消失。
 
-## 開發與測試
+允許的 Azure DevOps MCP 工具為：
 
-```text
-cd prreview/daemon
-node --test
+    repo_pull_request
+    repo_file
+    repo_branch
+    repo_repository
+    search_code
 
-cd ../extension
-node --test
-```
+## 常見問題
 
-設計文件位於 `docs/superpowers/specs/`，實作計畫位於 `docs/superpowers/plans/`。
+### 側邊欄顯示 daemon 無法連線
+
+確認 daemon 視窗仍在執行，並確認 URL 是 http://127.0.0.1:7797。也可以在瀏覽器開啟 http://127.0.0.1:7797/health，預期回傳 {"ok":true}。
+
+### Token 無效
+
+用 scripts/copy-token.cmd 重新複製目前設定目錄的 token。若曾刪除 token 或更換 PRREVIEW_CONFIG_DIR，請把新 token 貼入側邊欄後重新儲存。
+
+### Chrome 顯示本機網路存取提示
+
+在 Azure DevOps 頁面允許該提示，然後重新按「測試連線」。這是瀏覽器對網頁連到本機服務的權限確認。
+
+### Claude 或 Codex 找不到
+
+確認 CLI 在 PATH 中，或設定 PRREVIEW_CLAUDE／PRREVIEW_CODEX 的完整路徑。重新啟動 daemon 後再測試。
+
+### MCP 找不到或 review 立即失敗
+
+Claude 請確認 PRREVIEW_CLAUDE_MCP_CONFIG 指向包含 mcpServers.azure-devops 的 JSON。Codex 請執行 codex mcp get azure-devops --json，確認 server 已啟用且可由 CLI 登入。
+
+### 結果是一大段原始文字
+
+這表示 CLI 有輸出，但沒有符合 findings schema 的 JSON。原始文字仍會顯示在側邊欄；請檢查 CLI 版本、MCP 連線與 daemon console 訊息。
+
+## 開發與驗證
+
+daemon 測試：
+
+    cd daemon
+    npm test
+
+extension 測試：
+
+    cd extension
+    npm test
+
+目前基準測試為 daemon 84 passed、extension 25 passed。修改後至少應執行兩個測試套件，並確認：
+
+    git diff --check
+
+## 目錄
+
+    prreview/
+      daemon/
+        server.js       HTTP、CORS、token 與 SSE
+        auth.js         token 產生、讀取與安全寫入
+        jobs.js         in-memory job 與 SSE 訂閱
+        runner.js       Claude／Codex provider facade
+        claude.js       Claude MCP 隔離設定
+        codex.js        Codex MCP 隔離設定與 JSONL parser
+        process.js      child process、取消與清理
+        findings.js     findings schema 驗證與 JSON 擷取
+        prompts/        review prompt 與 findings schema
+        test/           daemon 測試
+      extension/
+        content.js      content script 入口
+        content-module.js  PR 偵測、設定與 review 流程
+        sidebar.js      Shadow DOM UI、寬度與開關控制
+        sidebar.css     側邊欄樣式
+        client.js       daemon HTTP／SSE client
+        settings.js     chrome.storage.local 設定
+        icons/          extension 與重開按鈕圖示
+        test/            extension 測試
+      scripts/
+        copy-token.cmd
+        copy-token.ps1
+      start-daemon.cmd
+      docs/superpowers/
+        specs/
+        plans/
+
+## 後續工作
+
+尚未納入目前 M1 的項目：
+
+- 逐則確認後把 finding 寫回 Azure DevOps PR。
+- 審核結果持久化與歷史紀錄。
+- 側邊欄取消目前執行中 job 的操作。
+- 自動啟動或真正的背景服務；目前提供的是方便手動啟動的 cmd 腳本。
+- 自訂 prompt、severity 規則與模型選擇器。

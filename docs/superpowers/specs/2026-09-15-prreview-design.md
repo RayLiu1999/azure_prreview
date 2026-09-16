@@ -1,192 +1,169 @@
-# PR AI 審核插件（prreview） — 設計文件
+# PR AI 審核插件（prreview）— 設計文件
 
-日期：2026-09-15
-狀態：已與使用者確認
+日期：2026-09-16
+狀態：M1 已完成主要實作與安全防護；瀏覽器真實 PR 的雙 provider 驗證仍待手動執行。
 
-## 目的
+## 1. 目的
 
-在 Azure DevOps 的 PR 頁面上，一鍵取得 AI code review 的結果，並能逐則決定要不要留言回 PR。
+在 Azure DevOps Cloud 的 Pull Request 詳細頁提供一個唯讀 AI code review 面板。使用者可以選擇本機 Claude 或 Codex CLI，讓 daemon 透過 Azure DevOps MCP 讀取 PR 與相關檔案，逐步回報進度，最後顯示結構化 findings。
 
-現況的痛點是流程斷裂：看到 PR → 切到終端機 → 想辦法把 PR 內容餵給 Claude → 讀結果 → 切回瀏覽器 → 手動留言。這個插件把整段流程收在 PR 頁面上完成。
+目前設計刻意不寫回 PR。審核結果只用於當次頁面上的人工判斷；comment、歷史結果與自動修正屬於後續範圍。
 
-核心觀察：**本機的 `claude` 或 `codex` CLI 都可以掛載 `azure-devops` MCP，自己抓 PR、抓檔案，並在明確授權時留言。** 因此插件不需要自己搬運 diff，只需要負責「偵測、觸發、呈現、授權」四件事。
+## 2. 範圍與決策
 
-## 決策
+| 項目 | 目前決策 | 原因 |
+| --- | --- | --- |
+| 目標平台 | Chrome／Edge Manifest V3 | extension 只需掛在 Azure DevOps PR 頁面 |
+| Azure DevOps | Cloud：dev.azure.com 與 *.visualstudio.com | 目前需求集中在團隊使用的 Cloud instance |
+| 執行位置 | 本機 Node.js daemon | CLI、MCP 登入狀態與長時間 job 不適合放在 extension |
+| 連線方式 | content script 直連 localhost daemon + SSE | 避免 MV3 service worker 生命週期中斷長時間 review |
+| Agent 選擇 | claude 或 codex，預設 claude | 每次 review 可選 provider；選擇保存於 chrome.storage.local |
+| 模型選擇 | 暫不提供模型欄位 | provider 直接使用本機 CLI 的預設或設定模型，避免複製 CLI 設定 |
+| 審核輸入 | PR 識別資料與 repository 內容 | 不 clone repository，也不直接操作 Azure DevOps DOM |
+| 審核輸出 | summary + findings JSON；解析失敗時保留 raw text | UI 可以排序與逐則閱讀，也保留診斷資訊 |
+| 寫回 PR | 目前不提供 | review 全程唯讀，避免誤留言或權限擴大 |
+| UI | 右側 Shadow DOM 面板，可調寬度、可收合 | 不污染 Azure DevOps CSS；收合後由右下角圖示重開 |
+| daemon 安全 | 127.0.0.1 + X-PRReview-Token + CORS allowlist | 限制本機與允許的 Azure DevOps origin |
+| 啟動方式 | npm start；Windows 另提供 start-daemon.cmd | 先提供可理解、可停止的手動流程；尚未做服務化 |
 
-| 項目 | 決定 | 理由 |
-|------|------|------|
-| 目標瀏覽器 | Chrome / Edge，Manifest V3 | 與既有 devkit / notes 插件一致 |
-| 目標平台 | 僅 Azure DevOps（`dev.azure.com`） | 唯一實際使用的平台；抽象化跨平台是尚未存在的需求 |
-| 使用對象 | 先自用，之後發給團隊 | 不得 hardcode 本機路徑，設定需可調，安裝步驟需文件化 |
-| 橋接方式 | 本地 HTTP daemon（Node） | 見下方「為何不用 Native Messaging」 |
-| Agent 選擇 | 每次 review 指定 `claude` 或 `codex`；預設 `claude` | M1 在側邊欄提供下拉選單、daemon URL 與 token 設定並寫入 `chrome.storage`；不需重啟 daemon |
-| 驅動 Agent | Claude：`claude -p --output-format stream-json`；Codex：`codex exec --json --ephemeral --sandbox read-only` | 沿用所選 CLI 的登入與 MCP 設定，不額外管理模型 API key |
-| 程式碼視野 | PR diff + 所選 Agent 用 MCP 按需抓檔 | 不需本機 clone，免除「repo → 本機路徑」對應表與 fetch/checkout 的整層複雜度 |
-| 產出格式 | 結構化 findings JSON + 一段總評 | 側邊欄需逐則展示、過濾、逐則發留言；純 Markdown 做不到 |
-| 寫回 PR | 可以，但必須由人逐則按下 | review 階段的 agent 全程唯讀，不具備留言能力，假警報不可能外洩到同事眼前 |
-| 寫回管道 | 再 `spawn` 一次所選 Agent，只暴露 `thread_write` | 沿用所選 CLI 的 Azure DevOps MCP 認證，團隊成員不需額外申請 PAT |
-| UI | 右側固定面板，Shadow DOM 隔離，不碰 Azure DevOps 內部 DOM | 見下方「為何不做跳行聯動」 |
-| 連線 | content script 直連 daemon + SSE | 見下方「為何不經過 background」 |
-| daemon 安全 | 共享 token（HTTP header）+ 只監聽 `127.0.0.1` | 見下方「威脅模型」 |
-| 審核準則 | 共用內建 prompt + Agent 自動讀 repo 規範 + 設定頁可追加 | 通用 prompt 產生通用意見；讀得到 `AGENTS.md`／`CLAUDE.md` 等專案規範才貼合實際 |
-| 建置工具 | 無。純 HTML/CSS/JS + 零相依 Node | 與 devkit 一致；此規模用打包工具換不到對應價值 |
-| 測試 | `node --test`，只測純函式 | 與 devkit 一致 |
+## 3. 元件架構
 
-### 為何不用 Native Messaging
+    Azure DevOps PR page
+      └─ content.js / content-module.js
+           ├─ parsePrUrl()
+           ├─ settings.js  ←→ chrome.storage.local
+           ├─ client.js    ←→ POST /review、GET /jobs/.../events
+           └─ sidebar.js   ←→ Shadow DOM UI
+                               │
+                               ▼
+                     http://127.0.0.1:7797
+                               │
+                       daemon/server.js
+                               ├─ auth.js
+                               ├─ jobs.js
+                               └─ runner.js
+                                  ├─ claude.js → Claude CLI + temporary MCP config
+                                  └─ codex.js  → Codex CLI + isolated MCP config
 
-一次 PR review 會跑數分鐘，而 MV3 的 service worker 約 30 秒無活動即休眠。走 Native Messaging 時，service worker 一睡，`connectNative` 的 port 就中斷、host process 被終止，**進行到一半的 review 直接消失**。要繞過只能靠 keep-alive 心跳硬撐，脆弱且難以除錯。
+daemon 不依賴 extension 的 service worker。job 在 daemon 記憶體中執行與保留有限完成記錄；daemon 重啟後 job 與結果都會消失。
 
-本地 daemon 讓 job 的生命週期完全脫離瀏覽器：job 活在 daemon 裡，瀏覽器睡了、關了、重開了都不影響。這個生命週期不匹配的問題自然消失。
+## 4. Review data flow
 
-代價是 daemon 需要有人啟動。接受。
+1. content script 用 parsePrUrl 從目前 URL 取得 org、project、repo、prId。
+2. 使用者在側邊欄儲存 daemon URL 與 token，並選擇 claude 或 codex。
+3. client.js 以 X-PRReview-Token 呼叫 POST /review；daemon 驗證 body 後建立或重用相同 PR 與 Agent 的 running job。
+4. runner.js 讀取 prompts/review.md，建立 provider 的隔離 MCP 設定，再啟動 CLI。
+5. CLI 只透過 Azure DevOps MCP 讀取 PR、branch、repository、file 與 code search 資料。
+6. process.js 與 stream.js／codex.js 將 CLI 輸出轉為 tool、text、error、done 事件。
+7. jobs.js 發布事件；server.js 以 SSE 傳給 extension。
+8. client.js 解析事件。findings.js 從最後結果擷取並驗證 summary 與 findings；解析失敗時回傳 raw text。
 
-### 為何不經過 background
+## 5. Daemon API
 
-側邊欄是 content script，只要分頁開著就一直活著，不像 service worker 會休眠。因此讓 content script 直連 daemon，可以完全繞開 service worker 的生命週期問題，同時省下一層訊息轉發。
+| 方法 | 路徑 | 認證 | 用途 |
+| --- | --- | --- | --- |
+| GET | /health | 不需要 | 確認 daemon 存活 |
+| GET | /auth | token | 測試瀏覽器設定是否有效 |
+| POST | /review | token | 建立 review job |
+| GET | /jobs/{jobId}/events | token | 讀取 SSE 進度與結果 |
 
-daemon 需為此把 CORS 開給 Azure DevOps 的 origin。這不構成安全缺口——真正的把關是 token（見威脅模型）。
+POST /review 只接受：
 
-代價是關掉分頁就收不到進度。但 job 仍活在 daemon 中，重開分頁可重新掛回同一個 job。
+    {
+      "org": "organization",
+      "project": "project",
+      "repo": "repository",
+      "prId": 123,
+      "agent": "claude"
+    }
 
-### 為何不做跳行聯動
+org、project、repo 會拒絕空值、控制字元、斜線與過長輸入；prId 必須是正整數；agent 只能是 claude 或 codex。API 沒有寫回 PR 的 endpoint。
 
-「點一則 finding，左邊 diff 自動捲到該行並 highlight」體驗明顯更好，但必須逆向工程 Azure DevOps 的 diff DOM 與虛擬捲動。那等於簽下一份長期維護合約：微軟每次改版都可能悄悄弄壞它。
+## 6. Provider 與隔離
 
-第一版只做「固定在右側、推開 body margin」，完全不讀取 Azure DevOps 的內部結構，改版風險接近零。若實際使用後確認跳行聯動的價值夠高，再單獨評估。
+### Claude
 
-### 威脅模型
+- 使用 restricted、strict-mcp-config、disable-slash-commands、no-session-persistence。
+- 從使用者設定讀取 azure-devops server，寫出只含該 server 的 temporary MCP JSON，完成後清理。
+- 以 allowedTools 只開放 repo_pull_request、repo_file、repo_branch、repo_repository、search_code。
+- 可由內部 runner options 傳入 model，但目前 extension 不暴露模型選擇。
 
-daemon 能 `spawn` `claude` 或 `codex`，而兩者都可能具備檔案與 MCP 存取權。**瀏覽器不會阻止任意網頁對 `localhost` 發出請求**——它只阻止該網頁讀取回應，但攻擊者根本不需要讀回應，只要能觸發就足以在使用者機器上啟動一個有權限的 agent。
+### Codex
 
-因此：
+- 使用 exec、json、ephemeral、sandbox read-only、skip-git-repo-check。
+- 使用 ignore-user-config 與 ignore-rules，重新建立只含 azure-devops 的 MCP 設定。
+- 設定 approval_policy=never、features.shell_tool=false、features.multi_agent=false、web_search=disabled。
+- MCP server 明確列出五個唯讀工具；file change 等違反事件會被 parser 標記為 violation。
+- 使用 output-schema 要求 findings JSON；turn.completed 的最後訊息會交給 findings parser。
 
-- daemon 只監聽 `127.0.0.1`，不監聽 `0.0.0.0`
-- daemon 啟動時產生隨機 token，寫入本機設定檔並印在 console；使用者將其貼進 PR 側邊欄的設定區
-- 每個請求必須帶 `X-PRReview-Token`；驗證失敗直接 401，**且在執行任何副作用之前就擋下**
-- CORS 的 `Access-Control-Allow-Origin` 只開給 Azure DevOps origin 與插件自身
-- Claude review 使用 `--restricted`、`--strict-mcp-config` 與唯讀 MCP 工具白名單
-- Codex review 使用 `--sandbox read-only`，並以隔離設定只啟用 `azure-devops` 的唯讀工具；不能只靠 prompt 宣稱唯讀
+## 7. UI 行為
 
-CORS 本身不是安全機制，token 才是。順序很重要：先驗 token，再做事。
+- 面板預設寬度 380px，限制在 280px 至 720px，並依 viewport 夾住最大值。
+- 左側 resize handle 支援 pointer drag 與鍵盤方向鍵、Home、End，並同步調整 document.body 的右側 margin。
+- 標題列關閉按鈕會隱藏面板；右下角浮動 AI 按鈕會重新開啟。
+- PR URL 不再符合格式時，content module 會解除 mount、移除事件與還原原本的 body margin。
+- Agent 選擇會立即寫入 chrome.storage.local。初始化設定非同步回來時，如果使用者已先選擇，該選擇不會被舊值覆蓋。
+- review 執行中停用 Agent 選單與開始按鈕；目前 UI 沒有取消 job 的按鈕。
 
-### 明確排除的範圍（YAGNI）
+## 8. 安全模型
 
-GitHub / GitLab 支援、自架 Azure DevOps Server、跳行聯動、AI 自動留言、daemon 服務化（開機自啟）、結果跨裝置同步、多 PR 批次審核、審核結果的歷史比較、自訂 severity 規則引擎。
+威脅來源包括惡意 PR 內容、repository 內的 prompt injection、其他本機程序與錯誤的 MCP 設定。
 
-其中兩項有明確的重啟條件：
+- daemon 只 listen 127.0.0.1，不暴露到區域網路。
+- token 由 randomBytes(32) 產生，儲存為 64 位小寫 hex；既有 token 會重用，並以建立檔案時的私有模式保護。使用者可刪除 token 檔後重新產生。
+- 除 /health 外，請求必須帶 X-PRReview-Token；token 不放在 URL 或 JSON body。
+- CORS 只回應 Azure DevOps Cloud allowlist，並處理 Private Network Access 預檢。
+- PR 與 repository 文件只是不可信 review data，不能授予更多工具、要求寫檔、執行命令或改變 system boundary。
+- Claude 與 Codex 都使用隔離設定與唯讀工具；Codex 額外使用 read-only sandbox 與停用 shell。
+- extension 對 finding 使用 textContent，不把 Agent 文字當 HTML 插入。
+- daemon 沒有 /comment、git push 或其他副作用 endpoint。
 
-- **跳行聯動**：等第一版實際使用一至兩週，確認「看完意見後真的會想跳到該行」是高頻動作，再開。
-- **daemon 服務化**：等要發給團隊時再評估。自用階段 `npm start` 完全夠用，提早做服務化只是在還沒確定介面時就把它凍結。
+## 9. 錯誤與降級
 
-**AI 自動留言不列入未來規劃**。它把假警報直接推到同事眼前且難以收回，省下的只是按一下的成本。這個交換在任何階段都不划算。
+| 情況 | 行為 |
+| --- | --- |
+| daemon 未啟動 | extension 顯示連線錯誤與啟動提示 |
+| token 錯誤 | /auth、/review、SSE 回傳 401，側邊欄顯示錯誤 |
+| 非允許 origin | CORS 預檢或請求回傳 403 |
+| CLI 不存在 | daemon 啟動檢查標示 provider 不可用；review job 回報錯誤 |
+| MCP 設定缺失 | provider 在啟動前失敗，temporary config 不會殘留 |
+| SSE 沒有 terminal event | client 拋出錯誤，不把不完整結果當成功 |
+| JSON 不符合 schema | 側邊欄顯示 raw text，保留診斷線索 |
+| PR URL 離開詳細頁 | content module unmount，還原頁面 layout |
 
-## 檔案結構
+## 10. 目錄與模組邊界
 
-```
-prreview/
-  extension/
-    manifest.json
-    content.js         注入側邊欄、SSE 連線、事件處理  ← 唯一接觸頁面 DOM
-    client.js          daemon HTTP/SSE 客戶端           ← 唯一接觸 fetch
-    sidebar.js         側邊欄的渲染與互動（Shadow DOM 內）
-    sidebar.css        側邊欄樣式（隨 Shadow DOM 注入）
-    prurl.js           PR URL 解析                    ← 純函式，零 chrome 依賴
-    settings.js        設定讀寫（daemon URL、token、agent） ← 唯一接觸 chrome.storage
-    options.html / options.css / options.js
-    icons/
-    test/
-      prurl.test.js
-  daemon/
-    package.json
-    server.js          HTTP 路由、CORS、token 驗證     ← 唯一接觸網路
-    auth.js            token 產生與驗證                ← 純函式
-    jobs.js            job 生命週期與 SSE 訂閱管理
-    runner.js          選擇 provider、spawn CLI、組 prompt ← 唯一接觸 child_process
-    stream.js          Claude stream-json → 進度事件    ← 純函式
-    codex.js           Codex 隔離設定、JSONL 解析與執行
-    claude.js          Claude Azure DevOps MCP 暫存設定
-    findings.js        findings schema 驗證與正規化     ← 純函式
-    prompts/
-      review.md        內建審核 prompt
-      findings.schema.json  Codex 結構化輸出 schema
-    test/
-      auth.test.js / stream.test.js / codex.test.js / findings.test.js
-  README.md            安裝與使用說明
-  docs/superpowers/
-```
+    prreview/
+      daemon/
+        server.js、auth.js、jobs.js
+        runner.js、process.js
+        claude.js、codex.js、stream.js
+        prompt.js、findings.js
+        prompts/review.md、prompts/findings.schema.json
+        test/
+      extension/
+        content.js、content-module.js
+        sidebar.js、sidebar.css
+        client.js、settings.js、prurl.js
+        manifest.json、icons/
+        test/
+      scripts/copy-token.cmd
+      scripts/copy-token.ps1
+      start-daemon.cmd
+      README.md
+      docs/superpowers/specs/
+      docs/superpowers/plans/
 
-## 模組邊界
+runner.js 只負責 provider facade；provider 內含 CLI invocation 與 MCP 隔離；process.js 負責 child process 生命週期；findings.js 只負責結果擷取與 schema 驗證；UI 不直接呼叫 Azure DevOps。
 
-**`prurl.js`（純函式）**
+## 11. 驗證與目前狀態
 
-- `parsePrUrl(url)` → `{ org, project, repo, prId } | null`
-  - 比對 `https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/{id}`
-  - 非 PR 頁面回傳 `null`，側邊欄據此決定顯示或隱藏
+- daemon 單元與整合測試：84 passed。
+- extension 測試：25 passed。
+- JavaScript syntax check、manifest JSON parse 與 git diff --check 已通過。
+- Windows 腳本已驗證 token 不存在時會回報錯誤，不會複製空值。
+- 真實 PR 的 Codex 唯讀流程曾用於整合驗證；Claude 的真實 PR 重跑需要另外取得授權後再執行，文件不把未執行的 live run 當成通過。
 
-**`stream.js`／`codex.js`**
+## 12. 後續里程碑
 
-- `parseStreamEvent(line)`／`parseCodexStreamEvent(line)` → `ProgressEvent | null`
-  - 把 Claude stream-json 或 Codex `--json` JSONL 事件翻譯成側邊欄看得懂的共同進度格式（「正在讀 X 檔」、「已產生 N 則意見」）
-  - 無法辨識的事件回傳 `null`，不得拋錯——CLI 的事件格式會隨版本增減
-  - `claude.js` 與 `codex.js` 負責讀取使用者的 `azure-devops` MCP 定義，並為 review 建立只含唯讀工具的隔離 invocation
-
-**`findings.js`（純函式）**
-
-- `parseFindings(text)` → `{ ok: true, summary, findings } | { ok: false, raw }`
-  - 驗證每則 finding 具備 `file` / `line` / `severity` / `title` / `body`
-  - **LLM 不照格式輸出時不得讓整次 review 作廢**：驗證失敗時回傳原始文字，側邊欄降級為顯示純文字
-
-**`runner.js`**
-
-- `runReview(pr, options)` → `{ events: AsyncIterable<ProgressEvent>, cancel(): void }`，其中 `options.agent` 為 `claude` 或 `codex`
-- Claude adapter 使用 `--restricted`、`--strict-mcp-config` 與 `--allowedTools`；Codex adapter 使用 `--sandbox read-only`、`--ephemeral` 與隔離 MCP 設定。兩者都只暴露 azure-devops 唯讀工具
-- `postComment(pr, finding, options)` → `Promise<void>`：另起一個隔離 process，只暴露 `thread_write`，prompt 為單一明確指令
-
-**`jobs.js`**
-
-- job 存在記憶體即可，daemon 重啟後遺失是可接受的
-- 一個 job 可被多個 SSE 訂閱者掛載（同一 PR 開兩個分頁）
-
-## 資料流
-
-```
-PR 頁面
-  → content.js 以 parsePrUrl 取得 { org, project, repo, prId }
-  → fetch POST /review  ({ org, project, repo, prId, agent } + X-PRReview-Token)
-daemon
-  → jobs.js 建立 job，回傳 jobId
-  → runner.js 依 agent spawn：
-      claude -p --restricted --strict-mcp-config --output-format stream-json --allowedTools <唯讀工具>
-      codex exec --json --ephemeral --sandbox read-only <隔離的唯讀 MCP 設定>
-                prompt = prompts/review.md + PR 座標 + 使用者自訂指示
-  → stream.js 逐行解析 → SSE 推送進度
-content.js  ← GET /jobs/:id/events (SSE)
-  → sidebar.js 即時渲染進度，結束後渲染 findings
-使用者按下某則的「發成 PR 留言」
-  → fetch POST /comment  → runner.postComment
-```
-
-## 錯誤處理
-
-| 情境 | 行為 |
-|------|------|
-| daemon 未啟動 | 側邊欄顯示「daemon 未連線」與啟動指令，不重試轟炸 |
-| token 錯誤或未設定 | 側邊欄設定區顯示可操作的錯誤訊息 |
-| 所選 CLI 不在 PATH | 該次 review 立即回傳清楚錯誤，並提示 `PRREVIEW_CLAUDE` 或 `PRREVIEW_CODEX` |
-| Agent CLI 非零退出 | 把 stderr 原文帶回側邊欄，不吞掉 |
-| Agent 值不是 `claude`／`codex` | daemon 回 400，不啟動 job |
-| Codex 找不到 `azure-devops` MCP | 該次 review 失敗並提示先完成 `codex mcp` 設定，不降級成無 MCP 的 review |
-| findings 格式不符 | 降級顯示原始文字（見 `findings.js`） |
-| 使用者中途取消（M2） | 終止 child process，job 標記為 cancelled。M1 的 runner 已具備 cancel()，但沒有觸發它的 UI |
-| 關閉分頁後重開（M2） | 以 PR 座標查詢既有 job 並重新掛載 SSE。M1 不做：重按即重跑 |
-
-## 里程碑
-
-**M1 — 垂直切片**：在 PR 頁面按一下，選用 Claude 或 Codex 後，側邊欄顯示真正的 findings。端到端串通但功能最少。
-不含：發留言、獨立設定頁、自訂 prompt、結果快取。token 驗證與 provider 隔離從 M1 就要有（安全機制不補做）；token、daemon URL 與 Agent 都在側邊欄設定並保存。
-
-**M2 — 可用**：發成 PR 留言、獨立設定頁（自訂指示與進階設定）、取消按鈕。
-
-**M3 — 可發佈**：README 安裝說明、daemon 啟動檢查、錯誤處理補完、結果快取。
-
-M1 的目的是**盡快回答「AI review 的品質到底夠不夠用」這個問題**。若答案是否定的，後續全部作廢——因此在得到答案之前，不投資任何 UI 打磨或設定介面。
+M2 可處理逐則確認後寫回 comment、取消目前 job、結果持久化與歷史列表。M3 再評估 daemon 服務化、自動啟動、自訂 prompt、severity 規則與模型選擇器。這些項目不應削弱目前的唯讀與本機隔離邊界。
