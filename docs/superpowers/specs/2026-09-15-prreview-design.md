@@ -24,7 +24,7 @@
 | 寫回 PR | 目前不提供 | review 全程唯讀，避免誤留言或權限擴大 |
 | UI | 右側 Shadow DOM 面板，可調寬度、可收合 | 不污染 Azure DevOps CSS；收合後由右下角圖示重開 |
 | daemon 安全 | 127.0.0.1 + X-PRReview-Token + CORS allowlist | 限制本機與允許的 Azure DevOps origin |
-| 啟動方式 | npm start；Windows 另提供 start-daemon.cmd | 先提供可理解、可停止的手動流程；尚未做服務化 |
+| 啟動方式 | npm start；Windows 另提供 start-daemon.cmd | 腳本在另一個視窗啟動 daemon，等 token 建立後自動複製；尚未做服務化 |
 
 ## 3. 元件架構
 

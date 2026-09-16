@@ -33,7 +33,7 @@
 - findings parser 能從 CLI 的前後置文字中擷取結構化 JSON；無法驗證時會回傳 raw text。SSE 若沒有 done 或 error terminal event 會被視為失敗。
 - extension 設定頁支援 daemon URL、token、測試連線與清除 token。Agent 選擇會寫入 chrome.storage.local，初始化非同步載入不會覆蓋使用者剛選的值。
 - 右側面板支援 280～720px 寬度、滑鼠拖曳、方向鍵、Home、End、關閉與右下角圖示重新開啟；離開 PR 頁面時會清理事件並還原 body margin。
-- 專案根目錄提供 start-daemon.cmd；scripts/copy-token.cmd 與 scripts/copy-token.ps1 可在 Windows 將 token 複製到剪貼簿而不印出 token。
+- 專案根目錄提供 start-daemon.cmd；它會在另一個視窗啟動 daemon，等待 token 建立後自動呼叫 scripts/copy-token.cmd。copy-token.cmd 與 scripts/copy-token.ps1 也可單獨執行，將 token 複製到剪貼簿而不印出 token。
 - 自動驗證：daemon 84 passed、extension 25 passed；JavaScript syntax、manifest JSON 與 git diff --check 已通過。
 
 ### 尚待手動驗證
