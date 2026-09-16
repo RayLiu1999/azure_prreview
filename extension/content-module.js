@@ -3,10 +3,19 @@ import { createSidebar } from './sidebar.js'
 import { clearToken, getSettings, normalizeSettings, saveSettings, setAgent } from './settings.js'
 import { checkConnection, startReview, streamJob } from './client.js'
 
-const PANEL_WIDTH = '380px'
+const DEFAULT_PANEL_WIDTH = 380
 let host = null
 let sidebar = null
 let previousMarginRight = ''
+let panelWidth = DEFAULT_PANEL_WIDTH
+
+function applyBodyMargin() {
+  if (!host || !sidebar?.isOpen()) {
+    document.body.style.marginRight = previousMarginRight
+    return
+  }
+  document.body.style.marginRight = `calc(${previousMarginRight || '0px'} + ${panelWidth}px)`
+}
 
 function mount() {
   if (host) return
@@ -19,16 +28,25 @@ function mount() {
   shadow.append(link)
   previousMarginRight = document.body.style.marginRight
   document.body.append(host)
-  document.body.style.marginRight = `calc(${previousMarginRight || '0px'} + ${PANEL_WIDTH})`
   sidebar = createSidebar(shadow)
   const instance = sidebar
+  let agentChangedByUser = false
+  panelWidth = DEFAULT_PANEL_WIDTH
+  sidebar.onWidthChange(width => { panelWidth = width; applyBodyMargin() })
+  sidebar.onVisibilityChange(() => applyBodyMargin())
+  applyBodyMargin()
   sidebar.setState({ phase: 'idle' })
   void getSettings().then(settings => {
     if (sidebar !== instance) return
-    instance.setAgent(settings.agent)
+    if (!agentChangedByUser) instance.setAgent(settings.agent)
     instance.setSettings(settings)
   }).catch(() => {})
-  sidebar.onAgentChange(agent => { void setAgent(agent).catch(() => {}) })
+  sidebar.onAgentChange(agent => {
+    agentChangedByUser = true
+    void setAgent(agent).catch(error => {
+      if (sidebar === instance) instance.setSettingsStatus(error?.message || 'Agent 設定儲存失敗。', 'error')
+    })
+  })
   sidebar.onSettingsSave(async draft => {
     instance.setSettingsBusy(true)
     instance.setSettingsStatus('儲存中…')
@@ -105,6 +123,7 @@ async function review(instance) {
 
 function unmount() {
   if (!host) return
+  sidebar?.destroy?.()
   host.remove()
   host = null
   sidebar = null

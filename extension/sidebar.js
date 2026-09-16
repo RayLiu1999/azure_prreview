@@ -1,12 +1,47 @@
 const SEVERITY_ORDER = Object.freeze({ blocker: 0, major: 1, minor: 2, nit: 3 })
+const DEFAULT_PANEL_WIDTH = 380
+const MIN_PANEL_WIDTH = 280
+const MAX_PANEL_WIDTH = 720
+
+function maxPanelWidth() {
+  const viewport = typeof window === 'undefined' || !Number.isFinite(window.innerWidth)
+    ? MAX_PANEL_WIDTH
+    : window.innerWidth - 40
+  return Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, viewport))
+}
+
+function clampPanelWidth(value) {
+  const width = Number.isFinite(Number(value)) ? Number(value) : DEFAULT_PANEL_WIDTH
+  return Math.round(Math.min(maxPanelWidth(), Math.max(MIN_PANEL_WIDTH, width)))
+}
 
 export function createSidebar(root) {
   const panel = document.createElement('div')
   panel.className = 'panel'
+  panel.style.setProperty('--prreview-panel-width', `${DEFAULT_PANEL_WIDTH}px`)
 
+  const resizeHandle = document.createElement('div')
+  resizeHandle.className = 'resize-handle'
+  resizeHandle.setAttribute('role', 'separator')
+  resizeHandle.setAttribute('aria-orientation', 'vertical')
+  resizeHandle.setAttribute('aria-label', '調整側邊欄寬度')
+  resizeHandle.tabIndex = 0
+  resizeHandle.setAttribute('aria-valuemin', String(MIN_PANEL_WIDTH))
+  resizeHandle.setAttribute('aria-valuemax', String(maxPanelWidth()))
+  resizeHandle.setAttribute('aria-valuenow', String(DEFAULT_PANEL_WIDTH))
+
+  const header = document.createElement('div')
+  header.className = 'panel-header'
   const title = document.createElement('h1')
   title.className = 'title'
   title.textContent = 'AI Review'
+  const closeButton = document.createElement('button')
+  closeButton.className = 'panel-close'
+  closeButton.type = 'button'
+  closeButton.textContent = '×'
+  closeButton.setAttribute('aria-label', '隱藏 AI Review 側邊欄')
+  closeButton.title = '隱藏側邊欄'
+  header.append(title, closeButton)
 
   const settingsDetails = document.createElement('details')
   settingsDetails.className = 'settings'
@@ -95,12 +130,76 @@ export function createSidebar(root) {
   button.textContent = '開始審核'
   const content = document.createElement('div')
   content.className = 'content'
-  panel.append(title, settingsDetails, agentRow, button, content)
+  panel.append(resizeHandle, header, settingsDetails, agentRow, button, content)
+
+  const reopenButton = document.createElement('button')
+  reopenButton.className = 'reopen-button'
+  reopenButton.type = 'button'
+  reopenButton.setAttribute('aria-label', '開啟 AI Review 側邊欄')
+  reopenButton.title = '開啟 AI Review 側邊欄'
+  const reopenIcon = document.createElement('img')
+  reopenIcon.alt = ''
+  if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
+    reopenIcon.src = chrome.runtime.getURL('icons/icon48.png')
+  }
+  const reopenLabel = document.createElement('span')
+  reopenLabel.className = 'reopen-label'
+  reopenLabel.textContent = 'AI'
+  reopenButton.append(reopenIcon, reopenLabel)
+  reopenButton.hidden = true
   root.append(panel)
+  root.append(reopenButton)
 
   let settingsSaveHandler = null
   let settingsClearHandler = null
   let settingsTestHandler = null
+  let visibilityHandler = null
+  let widthHandler = null
+  let isOpen = true
+  let drag = null
+
+  const setPanelWidth = value => {
+    const width = clampPanelWidth(value)
+    panel.style.setProperty('--prreview-panel-width', `${width}px`)
+    resizeHandle.setAttribute('aria-valuemax', String(maxPanelWidth()))
+    resizeHandle.setAttribute('aria-valuenow', String(width))
+    if (widthHandler) widthHandler(width)
+    return width
+  }
+  const setOpen = open => {
+    isOpen = Boolean(open)
+    panel.hidden = !isOpen
+    reopenButton.hidden = isOpen
+    if (visibilityHandler) visibilityHandler(isOpen)
+  }
+  const stopResize = () => {
+    if (!drag) return
+    window.removeEventListener('pointermove', drag.onMove)
+    window.removeEventListener('pointerup', drag.onStop)
+    window.removeEventListener('pointercancel', drag.onStop)
+    document.body.style.userSelect = drag.userSelect
+    document.body.style.cursor = drag.cursor
+    drag = null
+  }
+  const beginResize = event => {
+    if (event.button !== 0 || !isOpen) return
+    event.preventDefault()
+    const current = parseFloat(panel.style.getPropertyValue('--prreview-panel-width')) || DEFAULT_PANEL_WIDTH
+    const onMove = move => setPanelWidth(current + event.clientX - move.clientX)
+    const onStop = () => stopResize()
+    drag = {
+      onMove,
+      onStop,
+      userSelect: document.body.style.userSelect,
+      cursor: document.body.style.cursor,
+    }
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'ew-resize'
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onStop)
+    window.addEventListener('pointercancel', onStop)
+    resizeHandle.setPointerCapture?.(event.pointerId)
+  }
 
   const setSettingsStatus = (message = '', kind = '') => {
     settingsStatus.className = 'settings-status'
@@ -141,6 +240,25 @@ export function createSidebar(root) {
   })
   clearButton.addEventListener('click', () => invoke(settingsClearHandler))
   testButton.addEventListener('click', () => invoke(settingsTestHandler, getSettingsDraft()))
+  closeButton.addEventListener('click', () => setOpen(false))
+  reopenButton.addEventListener('click', () => setOpen(true))
+  resizeHandle.addEventListener('pointerdown', beginResize)
+  resizeHandle.addEventListener('keydown', event => {
+    const current = parseFloat(panel.style.getPropertyValue('--prreview-panel-width')) || DEFAULT_PANEL_WIDTH
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      setPanelWidth(current + 16)
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      setPanelWidth(current - 16)
+    } else if (event.key === 'Home') {
+      event.preventDefault()
+      setPanelWidth(MIN_PANEL_WIDTH)
+    } else if (event.key === 'End') {
+      event.preventDefault()
+      setPanelWidth(MAX_PANEL_WIDTH)
+    }
+  })
 
   const note = (className, value) => {
     const el = document.createElement('div')
@@ -179,6 +297,12 @@ export function createSidebar(root) {
   }
   return {
     setState,
+    setOpen,
+    isOpen: () => isOpen,
+    setPanelWidth,
+    onVisibilityChange(fn) { visibilityHandler = fn },
+    onWidthChange(fn) { widthHandler = fn },
+    destroy() { stopResize() },
     setAgent(agent) { agentSelect.value = agent === 'codex' ? 'codex' : 'claude' },
     getAgent() { return agentSelect.value === 'codex' ? 'codex' : 'claude' },
     onAgentChange(fn) { agentSelect.addEventListener('change', () => fn(agentSelect.value)) },

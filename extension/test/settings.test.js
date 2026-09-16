@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { clearToken, getSettings, normalizeSettings, saveSettings } from '../settings.js'
+import { clearToken, getSettings, normalizeSettings, saveSettings, setAgent } from '../settings.js'
 
 let previousChrome
 let stored
@@ -44,4 +44,11 @@ test('clearToken 只清除 token 並保留 daemon URL', async () => {
   const settings = await clearToken()
   assert.deepEqual(settings, { daemonUrl: 'http://localhost:7797', token: '', agent: 'claude' })
   assert.deepEqual(await getSettings(), settings)
+})
+
+test('setAgent 保存 Codex 選擇並拒絕未知 Agent', async () => {
+  await setAgent('codex')
+  assert.equal((await getSettings()).agent, 'codex')
+  await assert.rejects(() => setAgent('other'), /未知的 Agent/)
+  assert.equal((await getSettings()).agent, 'codex')
 })

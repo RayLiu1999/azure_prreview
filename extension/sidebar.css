@@ -4,7 +4,7 @@
   position: fixed;
   top: 0;
   right: 0;
-  width: 380px;
+  width: var(--prreview-panel-width, 380px);
   height: 100vh;
   overflow-y: auto;
   box-sizing: border-box;
@@ -15,6 +15,18 @@
   border-left: 1px solid #3c3c3c;
   z-index: 2147483000;
 }
+.panel[hidden], .reopen-button[hidden] { display: none; }
+.panel-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.panel-header .title { min-width: 0; margin: 0; }
+.panel-close { flex: 0 0 auto; width: 28px; height: 28px; padding: 0; color: #c8c8c8; background: transparent; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font: 20px/1 "Segoe UI", system-ui, sans-serif; }
+.panel-close:hover, .panel-close:focus-visible { color: #fff; background: #3c3c3c; border-color: #555; }
+.resize-handle { position: absolute; top: 0; bottom: 0; left: -5px; width: 10px; cursor: ew-resize; touch-action: none; z-index: 2; }
+.resize-handle::after { content: ''; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; background: transparent; transition: background .12s ease; }
+.resize-handle:hover::after, .resize-handle:focus-visible::after { background: #3794ff; }
+.reopen-button { position: fixed; right: 20px; bottom: 20px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; width: 48px; height: 48px; padding: 6px; color: #fff; background: #0e639c; border: 1px solid #3794ff; border-radius: 50%; box-shadow: 0 3px 12px rgb(0 0 0 / 35%); cursor: pointer; font: 600 11px/1 "Segoe UI", system-ui, sans-serif; z-index: 2147483000; }
+.reopen-button:hover, .reopen-button:focus-visible { background: #1177b8; }
+.reopen-button img { width: 28px; height: 28px; object-fit: contain; }
+.reopen-label { display: none; }
 
 .title { font-size: 16px; font-weight: 600; margin: 0 0 12px; }
 .settings { margin: 0 0 12px; padding: 10px; background: #252526; border: 1px solid #3c3c3c; border-radius: 4px; }

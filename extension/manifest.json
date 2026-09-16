@@ -26,7 +26,8 @@
         "prurl.js",
         "settings.js",
         "sidebar.js",
-        "client.js"
+        "client.js",
+        "icons/icon48.png"
       ],
       "matches": [
         "https://dev.azure.com/*",
