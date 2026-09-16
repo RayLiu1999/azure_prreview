@@ -44,6 +44,17 @@ test('turn.failed 與 error 轉成錯誤結果', () => {
   assert.equal(parseCodexStreamEvent(JSON.stringify({ type: 'error', message: 'bad' })).text, 'bad')
 })
 
+test('turn.completed 可作為最終訊息 fallback', () => {
+  assert.deepEqual(parseCodexStreamEvent(JSON.stringify({
+    type: 'turn.completed',
+    last_agent_message: '{"summary":"ok","findings":[]}',
+  })), {
+    kind: 'result',
+    text: '{"summary":"ok","findings":[]}',
+    isError: false,
+  })
+})
+
 test('非白名單 MCP 與 file change 轉成 violation', () => {
   assert.equal(parseCodexStreamEvent(JSON.stringify({ type: 'item.started', item: {
     type: 'mcp_tool_call', server: 'other', tool: 'repo_file', arguments: {},

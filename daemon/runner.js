@@ -15,8 +15,11 @@ export function runReview(pr, options = {}) {
   if (!['claude', 'codex'].includes(agent)) throw new Error('未知的 Agent：僅接受 claude 或 codex')
   if (agent === 'codex') return runCodexReview(pr, options)
   return runJsonlProcess('claude', async () => {
+    // Read the prompt before creating the temporary MCP config so a prompt
+    // loading failure cannot leave credential-bearing temporary files behind.
+    const prompt = await buildPrompt(pr)
     const mcpConfig = await createClaudeMcpConfig({ configPath: options.claudeMcpConfig })
-    const args = ['-p', await buildPrompt(pr), '--output-format', 'stream-json', '--verbose',
+    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose',
       '--restricted', '--tools', '', '--disable-slash-commands', '--no-session-persistence',
       '--mcp-config', mcpConfig.path, '--strict-mcp-config',
       '--allowedTools', ...READ_ONLY_TOOLS.map(t => `mcp__azure-devops__${t}`),

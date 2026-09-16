@@ -67,3 +67,14 @@ test('streamJob 將 SSE HTTP 錯誤轉成可讀訊息', async () => {
   globalThis.fetch = async () => new Response(JSON.stringify({ error: '找不到 job' }), { status: 404 })
   await assert.rejects(() => streamJob('missing', settings, () => {}), /找不到 job/)
 })
+
+test('streamJob 在沒有終止事件時回報提早中斷', async () => {
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: {"kind":"tool","tool":"repo_file"}\n\n'))
+      controller.close()
+    },
+  })
+  globalThis.fetch = async () => new Response(stream, { status: 200 })
+  await assert.rejects(() => streamJob('job-1', settings, () => {}), /提早結束/)
+})

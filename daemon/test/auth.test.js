@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { generateToken, tokenMatches, loadOrCreateToken } from '../auth.js'
@@ -49,4 +49,15 @@ test('loadOrCreateToken 第二次呼叫回傳同一個 token', async () => {
   const first = await loadOrCreateToken(dir)
   const second = await loadOrCreateToken(dir)
   assert.equal(first, second)
+})
+
+test('loadOrCreateToken 併發建立時所有呼叫取得同一個 token', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'prreview-auth-race-'))
+  try {
+    const tokens = await Promise.all(Array.from({ length: 12 }, () => loadOrCreateToken(dir)))
+    assert.equal(new Set(tokens).size, 1)
+    assert.equal((await readFile(join(dir, 'token'), 'utf8')).trim(), tokens[0])
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })

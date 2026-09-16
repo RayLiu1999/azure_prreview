@@ -78,6 +78,9 @@ export function parseCodexStreamEvent(line) {
     const message = event.error?.message || event.message || (typeof event.error === 'string' ? event.error : '') || 'Codex 審核失敗'
     return { kind: 'result', text: String(message), isError: true }
   }
+  if (type === 'turn.completed' && typeof event.last_agent_message === 'string') {
+    return { kind: 'result', text: event.last_agent_message, isError: false }
+  }
   const item = event.item
   if (!item || !['item.started', 'item.updated', 'item.completed'].includes(type)) return null
   const itemType = String(item.type || '').toLowerCase()
@@ -111,9 +114,6 @@ export function parseCodexStreamEvent(line) {
       : Array.isArray(item.content) ? item.content.map(part => part?.text || part?.content || '').join('') : ''
     if (!text) return null
     return { kind: 'result', text, isError: false }
-  }
-  if (type === 'turn.completed' && typeof event.last_agent_message === 'string') {
-    return { kind: 'result', text: event.last_agent_message, isError: false }
   }
   return null
 }

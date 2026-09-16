@@ -47,11 +47,15 @@ export async function streamJob(jobId, settings, onEvent) {
   const decoder = new TextDecoder()
   let buffer = ''
   let frameBytes = 0
+  let terminalReceived = false
   const consume = frame => {
     if (frame.length > MAX_FRAME) return
     const data = frame.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n')
     if (!data) return
-    try { onEvent(JSON.parse(data)) } catch {}
+    let event
+    try { event = JSON.parse(data) } catch { return }
+    if (event?.kind === 'done' || event?.kind === 'error') terminalReceived = true
+    try { onEvent(event) } catch {}
   }
   for (;;) {
     const { done, value } = await reader.read()
@@ -81,4 +85,5 @@ export async function streamJob(jobId, settings, onEvent) {
   }
   buffer += decoder.decode()
   if (buffer.trim()) consume(buffer)
+  if (!terminalReceived) throw new Error('daemon 事件串流提早結束，請重新執行審核。')
 }

@@ -16,6 +16,7 @@ export function tokenMatches(expected, actual) {
 
 export async function loadOrCreateToken(dir) {
   const file = join(dir, 'token')
+  await mkdir(dir, { recursive: true })
   try {
     const existing = await readFile(file, 'utf8')
     const trimmed = existing.trim()
@@ -28,7 +29,16 @@ export async function loadOrCreateToken(dir) {
     if (err.code !== 'ENOENT') throw err
   }
   const token = generateToken()
-  await mkdir(dir, { recursive: true })
-  await writeFile(file, token + '\n', { mode: 0o600 })
-  return token
+  try {
+    // `wx` prevents a second daemon started at the same time from rotating the
+    // token used by the process that won the race and is about to bind the port.
+    await writeFile(file, token + '\n', { mode: 0o600, flag: 'wx' })
+    return token
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err
+    const existing = (await readFile(file, 'utf8')).trim()
+    if (!existing) throw new Error(`token 檔案是空的：${file}`)
+    await chmod(file, 0o600).catch(() => {})
+    return existing
+  }
 }
