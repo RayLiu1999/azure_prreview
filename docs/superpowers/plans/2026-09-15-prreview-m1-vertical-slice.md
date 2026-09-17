@@ -32,11 +32,11 @@
 - review prompt 明確把 PR 內容、repository 文件與 AGENTS.md／CLAUDE.md 視為不可信資料，不能提高工具權限。
 - findings parser 能從 CLI 的前後置文字中擷取結構化 JSON；無法驗證時會回傳 raw text。SSE 若沒有 done 或 error terminal event 會被視為失敗。
 - extension 設定頁支援 daemon URL、token、測試連線與清除 token。Agent 選擇與「設定」區展開／收合狀態會寫入 chrome.storage.local，初始化非同步載入不會覆蓋使用者剛選的值。
-- 右側面板支援 280～720px 寬度、滑鼠拖曳、方向鍵、Home、End、關閉與右下角圖示重新開啟；離開 PR 頁面時會清理事件並還原 body margin。
+- 右側面板支援 280～720px 寬度、滑鼠拖曳、方向鍵、Home、End、關閉與右下角圖示重新開啟；側邊欄開啟／關閉與設定區展開／收合狀態會保存於 chrome.storage.local；離開 PR 頁面時會清理事件並還原 body margin。
 - 專案根目錄提供 start-daemon.cmd；它會在另一個視窗啟動 daemon，等待 token 建立後自動呼叫 scripts/copy-token.cmd。copy-token.cmd 與 scripts/copy-token.ps1 也可單獨執行，將 token 複製到剪貼簿而不印出 token。
 - review 結果已加入 `verdict`；有 blocker／major 顯示需要修改，只有 minor／nit 或沒有 finding 時顯示可通過。側邊欄提供中文 severity 標籤、說明與數量。
 - daemon 會將完成或失敗的結果保存於本機 `history.json`，`/history` 只依目前 PR 身分查詢；側邊欄進入 PR 時載入歷史並可重新查看結果。
-- 自動驗證：daemon 94 passed、extension 31 passed；JavaScript syntax、manifest JSON 與 git diff --check 已通過。
+- 自動驗證：daemon 94 passed、extension 32 passed；JavaScript syntax、manifest JSON 與 git diff --check 已通過。
 
 ### 尚待手動驗證
 
@@ -73,11 +73,12 @@
 - [x] raw fallback、舊格式結果與未知 severity 必須維持安全降級，不得把無法驗證的結果誤標為可通過。
 - [x] 已補上 schema、parser、label metadata、API 與 history store 回歸測試；瀏覽器端真實結果仍列在 M1 手動驗收。
 
-### M2-C：保存側邊欄設定區收合狀態
+### M2-C：保存側邊欄 UI 狀態
 
 - [x] 將設定區展開／收合狀態保存於 `chrome.storage.local`，與 daemon URL、token、Agent 設定使用同一個瀏覽器偏好層。
+- [x] 將側邊欄開啟／關閉狀態保存於 `chrome.storage.local`；按下 `X` 或右下角圖示後立即更新偏好。
 - [x] 側邊欄初始化時套用上次狀態；缺少或無效的舊資料一律預設展開。
-- [x] 補上保存、重新讀取與無效值降級測試，並同步更新使用說明。
+- [x] 處理設定非同步載入與使用者先操作的競態，並補上保存、重新讀取與無效值降級測試。
 
 ### 實作順序
 
@@ -2743,7 +2744,7 @@ git commit -m "docs(prreview): 新增安裝與使用說明"
 ### 自動驗證
 
 - [x] daemon 測試全數通過：94 passed。
-- [x] extension 測試全數通過：31 passed。
+- [x] extension 測試全數通過：32 passed。
 - [x] JavaScript syntax check、manifest JSON parse、git diff --check 通過。
 - [x] token 競態、prompt 安全界線、Codex read-only invocation、SSE terminal event、Agent 設定保存等回歸測試已納入。
 
@@ -2753,6 +2754,7 @@ git commit -m "docs(prreview): 新增安裝與使用說明"
 - [ ] 儲存 daemon URL／token、測試連線，重新整理後確認 Agent 選擇保留。
 - [ ] 拖曳寬度、鍵盤調整、關閉與右下角圖示重開。
 - [ ] 收合或展開「設定」區後重新整理，確認狀態會從瀏覽器偏好還原。
+- [ ] 按 `X` 關閉側邊欄後重新進入 PR，確認仍維持關閉；按右下角圖示重新開啟後確認狀態更新。
 - [ ] 在已授權的真實 PR 分別執行 Claude 與 Codex，確認 progress、findings 與 raw fallback。
 - [ ] 停止或重啟 daemon 後確認 token 仍可使用；刪除 token 檔後確認重新產生流程。
 

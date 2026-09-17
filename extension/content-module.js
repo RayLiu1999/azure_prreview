@@ -1,6 +1,6 @@
 import { parsePrUrl } from './prurl.js'
 import { createSidebar } from './sidebar.js'
-import { clearToken, getSettings, normalizeSettings, saveSettings, setAgent, setSettingsOpen } from './settings.js'
+import { clearToken, getSettings, normalizeSettings, saveSettings, setAgent, setSettingsOpen, setSidebarOpen } from './settings.js'
 import { checkConnection, getHistory, startReview, streamJob } from './client.js'
 
 const DEFAULT_PANEL_WIDTH = 380
@@ -33,9 +33,16 @@ function mount() {
   sidebar = createSidebar(shadow)
   const instance = sidebar
   let agentChangedByUser = false
+  let sidebarOpenChangedByUser = false
   panelWidth = DEFAULT_PANEL_WIDTH
   sidebar.onWidthChange(width => { panelWidth = width; applyBodyMargin() })
-  sidebar.onVisibilityChange(() => applyBodyMargin())
+  sidebar.onVisibilityChange(open => {
+    sidebarOpenChangedByUser = true
+    applyBodyMargin()
+    void setSidebarOpen(open).catch(error => {
+      if (sidebar === instance) instance.setSettingsStatus(error?.message || '側邊欄狀態儲存失敗。', 'error')
+    })
+  })
   sidebar.onSettingsOpenChange(open => {
     void setSettingsOpen(open).catch(error => {
       if (sidebar === instance) instance.setSettingsStatus(error?.message || '設定收合狀態儲存失敗。', 'error')
@@ -48,6 +55,7 @@ function mount() {
     if (!agentChangedByUser) instance.setAgent(settings.agent)
     instance.setSettings(settings)
     instance.setSettingsOpen(settings.settingsOpen)
+    if (!sidebarOpenChangedByUser) instance.setOpen(settings.sidebarOpen)
     void loadHistory(instance, pr, settings)
   }).catch(() => {})
   sidebar.onAgentChange(agent => {

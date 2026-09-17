@@ -18,6 +18,7 @@
 | 執行位置 | 本機 Node.js daemon | CLI、MCP 登入狀態與長時間 job 不適合放在 extension |
 | 連線方式 | content script 直連 localhost daemon + SSE | 避免 MV3 service worker 生命週期中斷長時間 review |
 | Agent 選擇 | claude 或 codex，預設 claude | 每次 review 可選 provider；選擇保存於 chrome.storage.local |
+| 側邊欄狀態 | 預設開啟；開啟／關閉狀態保存於 chrome.storage.local | `X` 與右下角圖示會更新狀態，重新進入 PR 時沿用使用者偏好 |
 | 設定區狀態 | 預設展開；展開／收合狀態保存於 chrome.storage.local | 重新整理或重新進入 PR 時沿用使用者偏好 |
 | 模型選擇 | 暫不提供模型欄位 | provider 直接使用本機 CLI 的預設或設定模型，避免複製 CLI 設定 |
 | 審核輸入 | PR 識別資料與 repository 內容 | 不 clone repository，也不直接操作 Azure DevOps DOM |
@@ -162,7 +163,7 @@ runner.js 只負責 provider facade；provider 內含 CLI invocation 與 MCP 隔
 ## 11. 驗證與目前狀態
 
 - daemon 單元與整合測試：94 passed。
-- extension 測試：31 passed。
+- extension 測試：32 passed。
 - JavaScript syntax check、manifest JSON parse 與 git diff --check 已通過。
 - Windows 腳本已驗證 token 不存在時會回報錯誤，不會複製空值。
 - 真實 PR 的 Codex 唯讀流程曾用於整合驗證；Claude 的真實 PR 重跑需要另外取得授權後再執行，文件不把未執行的 live run 當成通過。
@@ -187,5 +188,6 @@ M3 再評估 daemon 服務化、自動啟動、自訂 prompt、severity 規則�
 
 ### 12.3 側邊欄設定狀態需求
 
-- 設定區的展開／收合狀態保存於 `chrome.storage.local`，不與 PR 歷史資料混用。
-- 側邊欄建立時套用保存狀態；沒有狀態或資料格式不正確時預設展開。
+- 設定區的展開／收合狀態與側邊欄開啟／關閉狀態保存於 `chrome.storage.local`，不與 PR 歷史資料混用。
+- 側邊欄建立時套用保存狀態；沒有狀態或資料格式不正確時，設定區預設展開、側邊欄預設開啟。
+- 使用者在偏好讀取完成前先按下 `X` 或操作設定區時，非同步初始化不得覆蓋使用者的最新操作。

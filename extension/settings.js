@@ -3,6 +3,7 @@ const DEFAULTS = Object.freeze({
   token: '',
   agent: 'claude',
   settingsOpen: true,
+  sidebarOpen: true,
 })
 
 function normalizeDaemonUrl(value) {
@@ -27,6 +28,7 @@ export async function getSettings() {
     ...normalized,
     agent: merged.agent === 'codex' ? 'codex' : 'claude',
     settingsOpen: typeof merged.settingsOpen === 'boolean' ? merged.settingsOpen : DEFAULTS.settingsOpen,
+    sidebarOpen: typeof merged.sidebarOpen === 'boolean' ? merged.sidebarOpen : DEFAULTS.sidebarOpen,
   }
 }
 
@@ -56,6 +58,12 @@ export async function setSettingsOpen(open) {
   const settingsOpen = Boolean(open)
   await chrome.storage.local.set({ settingsOpen })
   return settingsOpen
+}
+
+export async function setSidebarOpen(open) {
+  const sidebarOpen = Boolean(open)
+  await chrome.storage.local.set({ sidebarOpen })
+  return sidebarOpen
 }
 
 export { DEFAULTS, normalizeDaemonUrl }

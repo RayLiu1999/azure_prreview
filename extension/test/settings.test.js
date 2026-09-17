@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { clearToken, getSettings, normalizeSettings, saveSettings, setAgent, setSettingsOpen } from '../settings.js'
+import { clearToken, getSettings, normalizeSettings, saveSettings, setAgent, setSettingsOpen, setSidebarOpen } from '../settings.js'
 
 let previousChrome
 let stored
@@ -36,13 +36,13 @@ test('normalizeSettings 只接受本機 daemon URL 並清除 token 空白', () =
 
 test('saveSettings 儲存設定並回傳完整設定', async () => {
   const settings = await saveSettings({ daemonUrl: 'http://localhost:7797/', token: '  abc  ' })
-  assert.deepEqual(settings, { daemonUrl: 'http://localhost:7797', token: 'abc', agent: 'claude', settingsOpen: true })
+  assert.deepEqual(settings, { daemonUrl: 'http://localhost:7797', token: 'abc', agent: 'claude', settingsOpen: true, sidebarOpen: true })
 })
 
 test('clearToken 只清除 token 並保留 daemon URL', async () => {
   await saveSettings({ daemonUrl: 'http://localhost:7797', token: 'abc' })
   const settings = await clearToken()
-  assert.deepEqual(settings, { daemonUrl: 'http://localhost:7797', token: '', agent: 'claude', settingsOpen: true })
+  assert.deepEqual(settings, { daemonUrl: 'http://localhost:7797', token: '', agent: 'claude', settingsOpen: true, sidebarOpen: true })
   assert.deepEqual(await getSettings(), settings)
 })
 
@@ -63,5 +63,15 @@ test('設定區收合狀態保存於瀏覽器並可在下次讀取', async () =>
 
 test('設定區收合狀態遇到舊版或無效值時回到預設展開', async () => {
   stored.settingsOpen = 'false'
+  stored.sidebarOpen = 'false'
   assert.equal((await getSettings()).settingsOpen, true)
+  assert.equal((await getSettings()).sidebarOpen, true)
+})
+
+test('側邊欄關閉狀態保存於瀏覽器並可在下次讀取', async () => {
+  assert.equal((await getSettings()).sidebarOpen, true)
+  assert.equal(await setSidebarOpen(false), false)
+  assert.equal((await getSettings()).sidebarOpen, false)
+  assert.equal(await setSidebarOpen(true), true)
+  assert.equal((await getSettings()).sidebarOpen, true)
 })
