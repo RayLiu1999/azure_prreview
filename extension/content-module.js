@@ -1,6 +1,6 @@
 import { parsePrUrl } from './prurl.js'
 import { createSidebar } from './sidebar.js'
-import { clearToken, getSettings, normalizeSettings, saveSettings, setAgent, setSettingsOpen, setSidebarOpen } from './settings.js'
+import { clearToken, getDaemonFolderPath, getSettings, normalizeSettings, saveDaemonFolderPath, saveSettings, setAgent, setSettingsOpen, setSidebarOpen } from './settings.js'
 import { checkConnection, getHistory, startReview, streamJob } from './client.js'
 
 const DEFAULT_PANEL_WIDTH = 380
@@ -8,6 +8,25 @@ let host = null
 let sidebar = null
 let previousMarginRight = ''
 let panelWidth = DEFAULT_PANEL_WIDTH
+const DAEMON_START_GUIDANCE = 'Daemon 未連線。請在「設定」填入並儲存 start-daemon.cmd 所在資料夾，複製路徑貼到檔案總管網址列，再啟動 start-daemon.cmd。'
+
+async function copyTextToClipboard(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value)
+    return
+  }
+  const field = document.createElement('textarea')
+  field.value = value
+  field.readOnly = true
+  field.setAttribute('aria-hidden', 'true')
+  field.style.position = 'fixed'
+  field.style.left = '-9999px'
+  document.body.append(field)
+  field.select()
+  const copied = document.execCommand('copy')
+  field.remove()
+  if (!copied) throw new Error('無法複製路徑，請手動選取欄位複製。')
+}
 
 function applyBodyMargin() {
   if (!host || !sidebar?.isOpen()) {
@@ -50,6 +69,11 @@ function mount() {
   })
   applyBodyMargin()
   sidebar.setState({ phase: 'idle' })
+  void getDaemonFolderPath().then(folderPath => {
+    if (sidebar === instance) instance.setDaemonFolderPath(folderPath)
+  }).catch(error => {
+    if (sidebar === instance) instance.setDaemonFolderStatus(error?.message || '無法讀取已儲存的資料夾路徑。', 'error')
+  })
   void getSettings().then(settings => {
     if (sidebar !== instance) return
     if (!agentChangedByUser) instance.setAgent(settings.agent)
@@ -121,10 +145,41 @@ function mount() {
     } catch (error) {
       if (sidebar !== instance) return
       instance.setSettingsStatus(error instanceof TypeError
-        ? 'daemon 未連線。請確認 daemon 正在執行。'
+        ? DAEMON_START_GUIDANCE
         : error?.message || '連線測試失敗。', 'error')
     } finally {
       if (sidebar === instance) instance.setSettingsBusy(false)
+    }
+  })
+  sidebar.onDaemonFolderSave(async folderPath => {
+    instance.setDaemonFolderBusy(true)
+    instance.setDaemonFolderStatus('儲存路徑中…')
+    try {
+      const savedPath = await saveDaemonFolderPath(folderPath)
+      if (sidebar === instance) {
+        instance.setDaemonFolderPath(savedPath)
+        instance.setDaemonFolderStatus('資料夾路徑已儲存。', 'success')
+      }
+    } catch (error) {
+      if (sidebar === instance) instance.setDaemonFolderStatus(error?.message || '路徑儲存失敗。', 'error')
+    } finally {
+      if (sidebar === instance) instance.setDaemonFolderBusy(false)
+    }
+  })
+  sidebar.onDaemonFolderCopy(async folderPath => {
+    if (!folderPath) {
+      instance.setDaemonFolderStatus('請先填入 start-daemon.cmd 所在資料夾路徑。', 'error')
+      return
+    }
+    instance.setDaemonFolderBusy(true)
+    instance.setDaemonFolderStatus('複製路徑中…')
+    try {
+      await copyTextToClipboard(folderPath)
+      if (sidebar === instance) instance.setDaemonFolderStatus('路徑已複製，貼到檔案總管網址列即可開啟資料夾。', 'success')
+    } catch (error) {
+      if (sidebar === instance) instance.setDaemonFolderStatus(error?.message || '路徑複製失敗。', 'error')
+    } finally {
+      if (sidebar === instance) instance.setDaemonFolderBusy(false)
     }
   })
   sidebar.onReview(() => review(instance))
@@ -154,7 +209,11 @@ async function review(instance) {
     await loadHistory(instance, pr, settings)
   } catch (error) {
     if (sidebar !== instance) return
-    instance.setState({ phase: 'error', message: error instanceof TypeError ? 'daemon 未連線。請先執行：cd prreview/daemon && npm start' : error.message })
+    if (error instanceof TypeError) {
+      instance.setState({ phase: 'error', message: DAEMON_START_GUIDANCE })
+    } else {
+      instance.setState({ phase: 'error', message: error.message })
+    }
   }
 }
 

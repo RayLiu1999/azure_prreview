@@ -43,6 +43,8 @@ daemon 預設監聽 http://127.0.0.1:7797。
 
 直接雙擊專案根目錄的 start-daemon.cmd。腳本會在另一個視窗啟動 daemon，並預設使用 %USERPROFILE%/.prreview 作為設定目錄；確認 token 檔案建立後，會自動呼叫 scripts/copy-token.cmd 將 token 放入剪貼簿。啟動腳本完成後即可直接在側邊欄的 Token 欄位按 Ctrl+V。
 
+也可以在 extension 側邊欄的「設定」儲存 start-daemon.cmd 所在資料夾路徑。之後按「複製路徑」，再貼到檔案總管的網址列即可開啟該資料夾。
+
 copy-token.cmd 不會把 token 印到畫面上；它會使用 Windows 原生剪貼簿指令，並保留 PowerShell 剪貼簿 API 作為 fallback。若要再次複製，可直接雙擊 scripts/copy-token.cmd。
 
 ### Token 生命週期

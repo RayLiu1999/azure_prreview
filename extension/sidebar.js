@@ -118,7 +118,41 @@ export function createSidebar(root) {
   settingsStatus.setAttribute('role', 'status')
   settingsStatus.setAttribute('aria-live', 'polite')
   settingsForm.append(daemonUrlField, tokenField, settingsActions, settingsStatus)
-  settingsDetails.append(settingsSummary, settingsForm)
+
+  const daemonFolderSettings = document.createElement('div')
+  daemonFolderSettings.className = 'daemon-folder-settings'
+  const daemonFolderField = document.createElement('label')
+  daemonFolderField.className = 'settings-field'
+  const daemonFolderCaption = document.createElement('span')
+  daemonFolderCaption.textContent = 'start-daemon.cmd 所在資料夾'
+  const daemonFolderInput = document.createElement('input')
+  daemonFolderInput.className = 'daemon-folder-path'
+  daemonFolderInput.type = 'text'
+  daemonFolderInput.autocomplete = 'off'
+  daemonFolderInput.spellcheck = false
+  daemonFolderInput.placeholder = '例如 C:\\Users\\name\\prreview'
+  daemonFolderInput.setAttribute('aria-label', 'start-daemon.cmd 所在資料夾路徑')
+  daemonFolderField.append(daemonFolderCaption, daemonFolderInput)
+  const daemonFolderHint = document.createElement('div')
+  daemonFolderHint.className = 'daemon-folder-hint'
+  daemonFolderHint.textContent = '填入包含 start-daemon.cmd 的資料夾並儲存；複製後貼到檔案總管網址列即可開啟。'
+  const daemonFolderActions = document.createElement('div')
+  daemonFolderActions.className = 'settings-actions'
+  const saveDaemonFolderButton = document.createElement('button')
+  saveDaemonFolderButton.className = 'settings-action primary'
+  saveDaemonFolderButton.type = 'button'
+  saveDaemonFolderButton.textContent = '儲存路徑'
+  const copyDaemonFolderButton = document.createElement('button')
+  copyDaemonFolderButton.className = 'settings-action'
+  copyDaemonFolderButton.type = 'button'
+  copyDaemonFolderButton.textContent = '複製路徑'
+  daemonFolderActions.append(saveDaemonFolderButton, copyDaemonFolderButton)
+  const daemonFolderStatus = document.createElement('div')
+  daemonFolderStatus.className = 'daemon-folder-status'
+  daemonFolderStatus.setAttribute('role', 'status')
+  daemonFolderStatus.setAttribute('aria-live', 'polite')
+  daemonFolderSettings.append(daemonFolderField, daemonFolderHint, daemonFolderActions, daemonFolderStatus)
+  settingsDetails.append(settingsSummary, settingsForm, daemonFolderSettings)
 
   const agentRow = document.createElement('label')
   agentRow.className = 'agent-row'
@@ -171,6 +205,8 @@ export function createSidebar(root) {
   let settingsSaveHandler = null
   let settingsClearHandler = null
   let settingsTestHandler = null
+  let daemonFolderSaveHandler = null
+  let daemonFolderCopyHandler = null
   let settingsOpenChangeHandler = null
   let visibilityHandler = null
   let widthHandler = null
@@ -227,6 +263,12 @@ export function createSidebar(root) {
     else delete settingsStatus.dataset.kind
     settingsStatus.textContent = typeof message === 'string' ? message : String(message ?? '')
   }
+  const setDaemonFolderStatus = (message = '', kind = '') => {
+    daemonFolderStatus.className = 'daemon-folder-status'
+    if (kind) daemonFolderStatus.dataset.kind = kind
+    else delete daemonFolderStatus.dataset.kind
+    daemonFolderStatus.textContent = typeof message === 'string' ? message : String(message ?? '')
+  }
   const invoke = (handler, value) => {
     if (!handler) return
     try {
@@ -244,6 +286,10 @@ export function createSidebar(root) {
     daemonUrlInput.value = typeof values.daemonUrl === 'string' ? values.daemonUrl : ''
     tokenInput.value = typeof values.token === 'string' ? values.token : ''
   }
+  const setDaemonFolderPath = value => {
+    daemonFolderInput.value = typeof value === 'string' ? value : ''
+  }
+  const getDaemonFolderPathDraft = () => daemonFolderInput.value.trim().replace(/^"(.*)"$/, '$1')
   const setSettingsBusy = busy => {
     for (const control of [daemonUrlInput, tokenInput, revealButton, saveButton, clearButton, testButton]) {
       control.disabled = Boolean(busy)
@@ -261,6 +307,19 @@ export function createSidebar(root) {
   })
   clearButton.addEventListener('click', () => invoke(settingsClearHandler))
   testButton.addEventListener('click', () => invoke(settingsTestHandler, getSettingsDraft()))
+  const invokeDaemonFolderHandler = handler => {
+    if (!handler) return
+    try {
+      const result = handler(getDaemonFolderPathDraft())
+      if (result && typeof result.catch === 'function') {
+        result.catch(error => setDaemonFolderStatus(error?.message || '路徑操作失敗。', 'error'))
+      }
+    } catch (error) {
+      setDaemonFolderStatus(error?.message || '路徑操作失敗。', 'error')
+    }
+  }
+  saveDaemonFolderButton.addEventListener('click', () => invokeDaemonFolderHandler(daemonFolderSaveHandler))
+  copyDaemonFolderButton.addEventListener('click', () => invokeDaemonFolderHandler(daemonFolderCopyHandler))
   closeButton.addEventListener('click', () => setOpen(false))
   reopenButton.addEventListener('click', () => setOpen(true))
   resizeHandle.addEventListener('pointerdown', beginResize)
@@ -400,9 +459,21 @@ export function createSidebar(root) {
     getSettingsDraft,
     setSettingsStatus,
     setSettingsBusy,
+    setDaemonFolderPath,
+    getDaemonFolderPathDraft,
+    setDaemonFolderStatus,
+    setDaemonFolderBusy(busy) {
+      daemonFolderInput.disabled = Boolean(busy)
+      saveDaemonFolderButton.disabled = Boolean(busy)
+      copyDaemonFolderButton.disabled = Boolean(busy)
+      saveDaemonFolderButton.textContent = busy ? '處理中…' : '儲存路徑'
+      copyDaemonFolderButton.textContent = busy ? '處理中…' : '複製路徑'
+    },
     onSettingsSave(fn) { settingsSaveHandler = fn },
     onSettingsClear(fn) { settingsClearHandler = fn },
     onSettingsTest(fn) { settingsTestHandler = fn },
+    onDaemonFolderSave(fn) { daemonFolderSaveHandler = fn },
+    onDaemonFolderCopy(fn) { daemonFolderCopyHandler = fn },
     onSettingsOpenChange(fn) { settingsOpenChangeHandler = fn },
   }
 }

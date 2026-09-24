@@ -5,6 +5,7 @@ const DEFAULTS = Object.freeze({
   settingsOpen: true,
   sidebarOpen: true,
 })
+const DAEMON_FOLDER_PATH_KEY = 'daemonFolderPath'
 
 function normalizeDaemonUrl(value) {
   if (typeof value !== 'string' || !value.trim()) return DEFAULTS.daemonUrl
@@ -47,6 +48,17 @@ export async function saveSettings(values = {}) {
 export async function clearToken() {
   await chrome.storage.local.remove('token')
   return getSettings()
+}
+
+export async function getDaemonFolderPath() {
+  const stored = await chrome.storage.local.get({ [DAEMON_FOLDER_PATH_KEY]: '' })
+  return typeof stored[DAEMON_FOLDER_PATH_KEY] === 'string' ? stored[DAEMON_FOLDER_PATH_KEY] : ''
+}
+
+export async function saveDaemonFolderPath(value) {
+  const folderPath = typeof value === 'string' ? value.trim().replace(/^"(.*)"$/, '$1') : ''
+  await chrome.storage.local.set({ [DAEMON_FOLDER_PATH_KEY]: folderPath })
+  return folderPath
 }
 
 export async function setAgent(agent) {

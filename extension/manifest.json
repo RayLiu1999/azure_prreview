@@ -3,7 +3,7 @@
   "name": "prreview",
   "version": "0.1.0",
   "description": "在 Azure DevOps PR 頁面上取得 AI 審核意見。",
-  "permissions": ["storage"],
+  "permissions": ["storage", "clipboardWrite"],
   "host_permissions": [
     "https://dev.azure.com/*",
     "https://*.visualstudio.com/*"

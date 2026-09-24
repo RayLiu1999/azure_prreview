@@ -44,6 +44,10 @@ button.settings-action:disabled { opacity: .55; cursor: default; }
 .settings-status { min-height: 1.6em; color: #a0a0a0; font-size: 12px; white-space: pre-wrap; }
 .settings-status[data-kind="success"] { color: #89d185; }
 .settings-status[data-kind="error"] { color: #f48771; }
+.daemon-folder-settings { display: grid; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid #3c3c3c; }
+.daemon-folder-hint, .daemon-folder-status { color: #a0a0a0; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.daemon-folder-status[data-kind="success"] { color: #89d185; }
+.daemon-folder-status[data-kind="error"] { color: #f48771; }
 .agent-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 12px; }
 select.agent { flex: 1; padding: 6px; color: #e0e0e0; background: #252526; border: 1px solid #3c3c3c; border-radius: 3px; font: inherit; }
 button.review { width: 100%; padding: 8px; background: #0e639c; color: #fff; border: 0; border-radius: 3px; cursor: pointer; font: inherit; }
